@@ -13,12 +13,17 @@ pub struct ConnectResult {
     pub rtt_ms: Option<f64>,
 }
 
-fn build_connect_result(target: &str, port: u16, success: bool, elapsed: Duration) -> ConnectResult {
+fn build_connect_result(
+    target: &str,
+    port: u16,
+    success: bool,
+    elapsed: Duration,
+) -> ConnectResult {
     ConnectResult {
         target: target.to_string(),
         port,
         reachable: success,
-        rtt_ms: success.then(|| elapsed.as_secs_f64() * 1000.0),
+        rtt_ms: success.then_some(elapsed.as_secs_f64() * 1000.0),
     }
 }
 
@@ -66,7 +71,12 @@ mod tests {
 
     #[test]
     fn build_connect_result_reports_failure_without_rtt() {
-        let result = build_connect_result("unreachable.invalid", 443, false, Duration::from_millis(2000));
+        let result = build_connect_result(
+            "unreachable.invalid",
+            443,
+            false,
+            Duration::from_millis(2000),
+        );
         assert_eq!(
             result,
             ConnectResult {

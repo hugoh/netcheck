@@ -1,0 +1,3 @@
+[default.extend-words]
+# "ratatui" (the TUI crate) reads as a typo of "ratatouille" to typos.
+ratatui = "ratatui"

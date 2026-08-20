@@ -23,7 +23,11 @@ pub struct ResolutionResult {
     pub duration_ms: Option<f64>,
 }
 
-fn build_result(domain: &str, lookup: io::Result<Vec<IpAddr>>, elapsed: Duration) -> ResolutionResult {
+fn build_result(
+    domain: &str,
+    lookup: io::Result<Vec<IpAddr>>,
+    elapsed: Duration,
+) -> ResolutionResult {
     match lookup {
         Ok(addrs) if !addrs.is_empty() => ResolutionResult {
             domain: domain.to_string(),
@@ -83,7 +87,7 @@ mod tests {
 
     #[test]
     fn build_result_reports_failure_on_lookup_error() {
-        let err = io::Error::new(io::ErrorKind::Other, "nodename nor servname provided");
+        let err = io::Error::other("nodename nor servname provided");
         let result = build_result("nonexistent.invalid", Err(err), Duration::from_millis(50));
 
         assert_eq!(

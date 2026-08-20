@@ -7,8 +7,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="NetCheck"
 BUNDLE_ID="net.hugoh.netcheck"
-VERSION="$(cd "$ROOT_DIR" && cargo metadata --no-deps --format-version=1 \
-  | python3 -c "import json,sys; print(next(p['version'] for p in json.load(sys.stdin)['packages'] if p['name']=='netcheck-gui'))")"
+VERSION="$(cd "$ROOT_DIR" && cargo metadata --no-deps --format-version=1 |
+    python3 -c "import json,sys; print(next(p['version'] for p in json.load(sys.stdin)['packages'] if p['name']=='netcheck-gui'))")"
 
 BUILD_DIR="$ROOT_DIR/target/release"
 APP_DIR="$ROOT_DIR/target/${APP_NAME}.app"
@@ -25,7 +25,7 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 cp "$BUILD_DIR/netcheck-gui" "$MACOS_DIR/$APP_NAME"
 
-cat > "$CONTENTS_DIR/Info.plist" <<PLIST
+cat >"$CONTENTS_DIR/Info.plist" <<INFOPLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -54,16 +54,16 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <string>public.app-category.utilities</string>
 </dict>
 </plist>
-PLIST
+INFOPLIST
 
 if [ -f "$ROOT_DIR/assets/AppIcon.icns" ]; then
-  cp "$ROOT_DIR/assets/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
+    cp "$ROOT_DIR/assets/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 else
-  echo "No assets/AppIcon.icns found — bundling without a custom icon."
+    echo "No assets/AppIcon.icns found — bundling without a custom icon."
 fi
 
 # Ad-hoc sign (identity "-"): no Apple Developer account needed. This
-# satisfies `codesign -v` / hardened-runtime checks and lets the app run
+# satisfies codesign -v / hardened-runtime checks and lets the app run
 # locally without a Gatekeeper prompt (local builds aren't quarantined
 # anyway). It is NOT trusted by Gatekeeper on any other machine — sharing
 # the app with someone else still needs a real Developer ID + notarization.

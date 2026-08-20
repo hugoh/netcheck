@@ -1,9 +1,9 @@
 use eframe::egui;
 use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 use netstatus::NetworkStatus;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
@@ -128,7 +128,11 @@ fn dns_resolvers_table(ui: &mut egui::Ui, status: &NetworkStatus) {
         .column(Column::auto().at_least(50.0))
         .column(Column::remainder())
         .body(|body| {
-            let rows: Vec<_> = status.resolvers.iter().filter(|r| !r.nameservers.is_empty()).collect();
+            let rows: Vec<_> = status
+                .resolvers
+                .iter()
+                .filter(|r| !r.nameservers.is_empty())
+                .collect();
             body.rows(18.0, rows.len(), |mut row| {
                 let r = rows[row.index()];
                 let label = r
@@ -162,7 +166,11 @@ fn resolution_table(ui: &mut egui::Ui, status: &NetworkStatus) {
                     ui.colored_label(if r.resolved { GOOD } else { BAD }, &r.domain);
                 });
                 row.col(|ui| {
-                    ui.label(r.duration_ms.map(|ms| format!("{ms:.1} ms")).unwrap_or_default());
+                    ui.label(
+                        r.duration_ms
+                            .map(|ms| format!("{ms:.1} ms"))
+                            .unwrap_or_default(),
+                    );
                 });
                 row.col(|ui| {
                     ui.label(r.addresses.first().cloned().unwrap_or_default());
@@ -271,7 +279,9 @@ impl eframe::App for App {
                                         let vpn = &status.vpn;
                                         ui.label(format!(
                                             "Primary interface: {}",
-                                            vpn.primary_interface.clone().unwrap_or_else(|| "unknown".into())
+                                            vpn.primary_interface
+                                                .clone()
+                                                .unwrap_or_else(|| "unknown".into())
                                         ));
                                         ui.colored_label(
                                             if vpn.connected { GOOD } else { BAD },
@@ -280,12 +290,17 @@ impl eframe::App for App {
                                         ui.label(format!("Split tunnel: {}", vpn.split_tunnel));
                                         ui.label(format!("Split DNS: {}", status.split_dns));
                                         if !vpn.tunnels.is_empty() {
-                                            ui.label(format!("Tunnels: {}", vpn.tunnels.join(", ")));
+                                            ui.label(format!(
+                                                "Tunnels: {}",
+                                                vpn.tunnels.join(", ")
+                                            ));
                                         }
                                     });
                                 });
                                 strip.cell(|ui| {
-                                    panel(ui, "DNS resolvers", |ui| dns_resolvers_table(ui, &status));
+                                    panel(ui, "DNS resolvers", |ui| {
+                                        dns_resolvers_table(ui, &status)
+                                    });
                                 });
                                 strip.cell(|ui| {
                                     panel(ui, "DNS resolution", |ui| resolution_table(ui, &status));
@@ -299,7 +314,9 @@ impl eframe::App for App {
                             .size(Size::remainder())
                             .vertical(|mut strip| {
                                 strip.cell(|ui| {
-                                    panel(ui, "Reachability (IPs)", |ui| ping_table(ui, &status.reachability));
+                                    panel(ui, "Reachability (IPs)", |ui| {
+                                        ping_table(ui, &status.reachability)
+                                    });
                                 });
                                 strip.cell(|ui| {
                                     panel(ui, "Reachability (domains, TCP:443)", |ui| {
@@ -315,7 +332,9 @@ impl eframe::App for App {
 
 fn load_icon() -> egui::IconData {
     let bytes = include_bytes!("../../../assets/icon-1024.png");
-    let image = image::load_from_memory(bytes).expect("bundled icon should decode").to_rgba8();
+    let image = image::load_from_memory(bytes)
+        .expect("bundled icon should decode")
+        .to_rgba8();
     let (width, height) = image.dimensions();
     egui::IconData {
         rgba: image.into_raw(),

@@ -1,5 +1,7 @@
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 use crossterm::{ExecutableCommand, execute};
 use netstatus::NetworkStatus;
 use ratatui::Terminal;
@@ -9,9 +11,9 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use std::io::{self, Stdout};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
@@ -19,7 +21,9 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 /// Spawns the background workers. Returns a receiver fed by both an initial
 /// one-shot collection, a periodic auto-refresh (gated by `auto_refresh`,
 /// off by default), and manual refreshes triggered via the returned sender.
-fn spawn_workers(auto_refresh: Arc<AtomicBool>) -> (mpsc::Receiver<NetworkStatus>, mpsc::Sender<()>) {
+fn spawn_workers(
+    auto_refresh: Arc<AtomicBool>,
+) -> (mpsc::Receiver<NetworkStatus>, mpsc::Sender<()>) {
     let (tx, rx) = mpsc::channel();
     let (manual_tx, manual_rx) = mpsc::channel::<()>();
 
@@ -79,7 +83,10 @@ fn interfaces_list(status: &NetworkStatus) -> List<'static> {
                 i.addresses.join(", ")
             };
             ListItem::new(Line::from(vec![
-                Span::styled(format!("{:<8}", i.name), Style::default().fg(color).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("{:<8}", i.name),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(if i.up { "UP   " } else { "DOWN " }),
                 Span::raw(addrs),
             ]))
@@ -93,7 +100,9 @@ fn vpn_paragraph(status: &NetworkStatus) -> Paragraph<'static> {
     let mut lines = vec![
         Line::from(format!(
             "Primary: {}",
-            vpn.primary_interface.clone().unwrap_or_else(|| "unknown".to_string())
+            vpn.primary_interface
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string())
         )),
         Line::from(format!("VPN connected: {}", vpn.connected)),
         Line::from(format!("Split tunnel: {}", vpn.split_tunnel)),
@@ -117,7 +126,11 @@ fn dns_list(status: &NetworkStatus) -> List<'static> {
                 .or_else(|| r.search_domains.first().cloned())
                 .unwrap_or_else(|| "*".to_string());
             let scope = r.if_name.clone().unwrap_or_else(|| "any".to_string());
-            let color = if r.reachable { Color::Green } else { Color::Red };
+            let color = if r.reachable {
+                Color::Green
+            } else {
+                Color::Red
+            };
             ListItem::new(Line::from(vec![
                 Span::styled(format!("{label:<20}"), Style::default().fg(color)),
                 Span::raw(format!("{:<10} ", scope)),
@@ -125,14 +138,22 @@ fn dns_list(status: &NetworkStatus) -> List<'static> {
             ]))
         })
         .collect();
-    List::new(items).block(Block::default().borders(Borders::ALL).title("DNS resolvers"))
+    List::new(items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("DNS resolvers"),
+    )
 }
 
 fn ping_list(title: &'static str, results: &[netstatus::PingResult]) -> List<'static> {
     let items: Vec<ListItem> = results
         .iter()
         .map(|p| {
-            let color = if p.reachable { Color::Green } else { Color::Red };
+            let color = if p.reachable {
+                Color::Green
+            } else {
+                Color::Red
+            };
             let rtt = p
                 .rtt_ms
                 .map(|ms| format!("{ms:.1} ms"))
@@ -150,7 +171,11 @@ fn connect_list(title: &'static str, results: &[netstatus::ConnectResult]) -> Li
     let items: Vec<ListItem> = results
         .iter()
         .map(|c| {
-            let color = if c.reachable { Color::Green } else { Color::Red };
+            let color = if c.reachable {
+                Color::Green
+            } else {
+                Color::Red
+            };
             let rtt = c
                 .rtt_ms
                 .map(|ms| format!("{ms:.1} ms"))
@@ -173,7 +198,9 @@ fn resolution_list(status: &NetworkStatus) -> List<'static> {
             let detail = if r.resolved {
                 format!(
                     "{}  ({})",
-                    r.duration_ms.map(|ms| format!("{ms:.1} ms")).unwrap_or_default(),
+                    r.duration_ms
+                        .map(|ms| format!("{ms:.1} ms"))
+                        .unwrap_or_default(),
                     r.addresses.first().cloned().unwrap_or_default()
                 )
             } else {
@@ -185,7 +212,11 @@ fn resolution_list(status: &NetworkStatus) -> List<'static> {
             ]))
         })
         .collect();
-    List::new(items).block(Block::default().borders(Borders::ALL).title("DNS resolution"))
+    List::new(items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("DNS resolution"),
+    )
 }
 
 fn draw(
@@ -231,9 +262,15 @@ fn draw(
                 frame.render_widget(vpn_paragraph(status), left[1]);
                 frame.render_widget(dns_list(status), middle[0]);
                 frame.render_widget(resolution_list(status), middle[1]);
-                frame.render_widget(ping_list("Reachability (IPs)", &status.reachability), right[0]);
                 frame.render_widget(
-                    connect_list("Reachability (domains, TCP:443)", &status.domain_reachability),
+                    ping_list("Reachability (IPs)", &status.reachability),
+                    right[0],
+                );
+                frame.render_widget(
+                    connect_list(
+                        "Reachability (domains, TCP:443)",
+                        &status.domain_reachability,
+                    ),
                     right[1],
                 );
             }
@@ -274,20 +311,19 @@ fn main() -> io::Result<()> {
                 auto_refresh.load(Ordering::Relaxed),
             )?;
 
-            if event::poll(Duration::from_millis(200))? {
-                if let Event::Key(key) = event::read()? {
-                    if key.kind == KeyEventKind::Press {
-                        match key.code {
-                            KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                            KeyCode::Char('r') => {
-                                let _ = manual_tx.send(());
-                            }
-                            KeyCode::Char('a') => {
-                                auto_refresh.fetch_xor(true, Ordering::Relaxed);
-                            }
-                            _ => {}
-                        }
+            if event::poll(Duration::from_millis(200))?
+                && let Event::Key(key) = event::read()?
+                && key.kind == KeyEventKind::Press
+            {
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                    KeyCode::Char('r') => {
+                        let _ = manual_tx.send(());
                     }
+                    KeyCode::Char('a') => {
+                        auto_refresh.fetch_xor(true, Ordering::Relaxed);
+                    }
+                    _ => {}
                 }
             }
         }

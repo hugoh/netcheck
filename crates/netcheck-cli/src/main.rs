@@ -37,7 +37,10 @@ enum Command {
 }
 
 fn print_json<T: serde::Serialize>(value: &T) {
-    println!("{}", serde_json::to_string_pretty(value).expect("serializable status"));
+    println!(
+        "{}",
+        serde_json::to_string_pretty(value).expect("serializable status")
+    );
 }
 
 fn main() {

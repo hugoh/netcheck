@@ -1,0 +1,61 @@
+amends "package://github.com/jdx/hk/releases/download/v1.56.0/hk@1.56.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v1.56.0/hk@1.56.0#/Builtins.pkl"
+import "package://github.com/hugoh/hk-config/releases/download/v1.4.1/hk-config@1.4.1#/base.pkl" as Base
+
+min_hk_version = Base.min_hk_version
+
+// cargo_fmt/cargo_clippy/cargo_test are excluded from the `ci` profile: CI
+// runs `hk check --profile ci` on a cheap ubuntu runner for the
+// language-agnostic lint sweep only, and checks Rust itself directly (with
+// the toolchain already present) in the macOS build/test job instead of
+// installing Rust a second time just for hk. Local `pre-commit`/`pre-push`
+// (no --profile flag) still run all three for full local coverage.
+local linters = new Mapping<String, Step> {
+    ...Base.base
+    ...Base.shell
+    ["cargo_fmt"] = {
+        glob = List("**/*.rs")
+        check = "cargo fmt --all -- --check"
+        fix = "cargo fmt --all"
+        profiles = List("!ci")
+    }
+    ["cargo_clippy"] = {
+        glob = List("**/*.rs", "**/Cargo.toml")
+        check = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
+        profiles = List("!ci")
+    }
+    ["cargo_test"] = {
+        glob = List("**/*.rs", "**/Cargo.toml")
+        check = "cargo test --workspace"
+        profiles = List("!ci")
+    }
+    // Plain `cog check` (whole history), not `--from-latest-tag`: this repo
+    // has no release tag yet, and `--from-latest-tag` hard-errors with
+    // "unable to get any tag" until one exists. Cheap to check full history
+    // at this size — worth switching to `--from-latest-tag` once v0.1.0 is
+    // tagged, to match the pattern other repos use.
+    ["conventional_commit"] = {
+        check = "cog check"
+    }
+}
+
+hooks {
+    ["pre-commit"] {
+        fix = true
+        stash = "git"
+        steps = linters
+    }
+    ["pre-push"] {
+        steps = linters
+    }
+    ["fix"] {
+        fix = true
+        steps = linters
+    }
+    ["check"] {
+        steps = linters
+    }
+    ["commit-msg"] {
+        steps = Base.commit_msg
+    }
+}

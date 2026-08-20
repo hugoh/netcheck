@@ -6,22 +6,24 @@ things you end up checking manually when the Cisco VPN acts up.
 
 ## Layout
 
-```
+```text
 crates/
-  netstatus/      core diagnostics logic (no UI) — shared by the CLI, TUI, and GUI
+  netstatus/      core diagnostics logic (no UI) — shared by CLI/TUI/GUI
   netcheck-cli/   `netcheck` CLI, JSON output
   netcheck-tui/   `netcheck-tui` terminal dashboard (ratatui)
-  netcheck-gui/   `netcheck-gui` native window app (egui/eframe) — functional, deliberately plain
+  netcheck-gui/   `netcheck-gui` native window (egui/eframe), deliberately plain
 apps/
-  NetCheckMac/    a real SwiftUI macOS app (Swift Package) — shells out to `netcheck status`
-                  and decodes its JSON. Genuinely native window chrome, vibrancy, Dark Mode,
-                  and widgets (GroupBox, List, SF Symbols) for free, since it's actually AppKit
-                  under the hood rather than a custom-drawn immediate-mode GUI like egui.
+  NetCheckMac/    a real SwiftUI macOS app (Swift Package) — shells out to
+                  `netcheck status` and decodes its JSON. Genuinely native
+                  window chrome, vibrancy, Dark Mode, and widgets (GroupBox,
+                  List, SF Symbols) for free — it's actually AppKit under
+                  the hood, unlike egui's custom-drawn immediate-mode GUI.
 ```
 
-`netcheck-gui` (egui) can never look pixel-native on macOS — it draws every widget itself
-rather than using AppKit, so no amount of color tuning changes that. `apps/NetCheckMac` is
-the answer when you want it to actually look like a Mac app.
+`netcheck-gui` (egui) can never look pixel-native on macOS — it draws every
+widget itself rather than using AppKit, so no amount of color tuning changes
+that. `apps/NetCheckMac` is the answer when you want it to look like a Mac
+app.
 
 `netstatus` shells out to `scutil --dns`, `scutil --nwi`, and `ping`, and
 uses the `netdev` crate for interface enumeration. Each OS-facing call is a
@@ -52,8 +54,8 @@ thin wrapper around a pure, unit-tested parser/transform function.
 
 ## Usage
 
-```
-cargo run -p netcheck-cli -- status       # full snapshot as JSON
+```text
+cargo run -p netcheck-cli -- status     # full snapshot as JSON
 cargo run -p netcheck-cli -- interfaces
 cargo run -p netcheck-cli -- dns
 cargo run -p netcheck-cli -- vpn
@@ -61,13 +63,18 @@ cargo run -p netcheck-cli -- ping 1.1.1.1 8.8.8.8
 cargo run -p netcheck-cli -- resolve google.com github.com
 cargo run -p netcheck-cli -- connect amazon.com microsoft.com --port 443
 
-cargo run -p netcheck-tui               # live terminal dashboard (q to quit, r to refresh, a to toggle auto-refresh)
-cargo run -p netcheck-gui               # native window (auto-refresh off by default, [a] or checkbox to toggle)
+# live terminal dashboard: q quit, r refresh, a toggle auto-refresh
+cargo run -p netcheck-tui
 
-./scripts/bundle-macos.sh               # build a release .app bundle at target/NetCheck.app
-open target/NetCheck.app                # launch it like any other macOS app
+# native window: auto-refresh off by default, [a] or checkbox to toggle
+cargo run -p netcheck-gui
 
-cd apps/NetCheckMac && swift run -c release   # the native SwiftUI app (Cmd+R to refresh)
+# build+sign a release .app bundle, then launch it
+./scripts/bundle-macos.sh
+open target/NetCheck.app
+
+# the native SwiftUI app (r refresh, a toggle auto-refresh)
+cd apps/NetCheckMac && swift run -c release
 ```
 
 ## Status

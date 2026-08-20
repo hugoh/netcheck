@@ -18,11 +18,11 @@ swift "$ROOT_DIR/scripts/gen_icon.swift" "$ASSETS_DIR/icon-1024.png"
 
 declare -a SIZES=(16 32 64 128 256 512 1024)
 for s in "${SIZES[@]}"; do
-  sips -z "$s" "$s" "$ASSETS_DIR/icon-1024.png" --out "$ICONSET_DIR/icon_${s}x${s}.png" >/dev/null
-  if [ "$s" -le 512 ]; then
-    double=$((s * 2))
-    sips -z "$double" "$double" "$ASSETS_DIR/icon-1024.png" --out "$ICONSET_DIR/icon_${s}x${s}@2x.png" >/dev/null
-  fi
+    sips -z "$s" "$s" "$ASSETS_DIR/icon-1024.png" --out "$ICONSET_DIR/icon_${s}x${s}.png" >/dev/null
+    if [ "$s" -le 512 ]; then
+        double=$((s * 2))
+        sips -z "$double" "$double" "$ASSETS_DIR/icon-1024.png" --out "$ICONSET_DIR/icon_${s}x${s}@2x.png" >/dev/null
+    fi
 done
 
 echo "Building .icns..."

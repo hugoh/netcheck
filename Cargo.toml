@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/netstatus", "crates/netcheck-cli", "crates/netcheck-tui", "crates/netcheck-gui"]
+members = ["crates/netcheck-cli", "crates/netcheck-gui", "crates/netcheck-tui", "crates/netstatus"]
 
 [workspace.package]
 edition = "2024"
