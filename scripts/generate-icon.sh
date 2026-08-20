@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Generates assets/icon-1024.png (used as the window/dock icon at runtime)
+# and assets/AppIcon.icns (used by scripts/bundle-macos.sh) from a small
+# AppKit-drawn icon — no external tools or network access required.
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ASSETS_DIR="$ROOT_DIR/assets"
+ICONSET_DIR="$ROOT_DIR/target/AppIcon.iconset"
+
+mkdir -p "$ASSETS_DIR"
+rm -rf "$ICONSET_DIR"
+mkdir -p "$ICONSET_DIR"
+
+echo "Rendering master icon..."
+swift "$ROOT_DIR/scripts/gen_icon.swift" "$ASSETS_DIR/icon-1024.png"
+
+declare -a SIZES=(16 32 64 128 256 512 1024)
+for s in "${SIZES[@]}"; do
+  sips -z "$s" "$s" "$ASSETS_DIR/icon-1024.png" --out "$ICONSET_DIR/icon_${s}x${s}.png" >/dev/null
+  if [ "$s" -le 512 ]; then
+    double=$((s * 2))
+    sips -z "$double" "$double" "$ASSETS_DIR/icon-1024.png" --out "$ICONSET_DIR/icon_${s}x${s}@2x.png" >/dev/null
+  fi
+done
+
+echo "Building .icns..."
+iconutil -c icns "$ICONSET_DIR" -o "$ASSETS_DIR/AppIcon.icns"
+
+echo "Done: $ASSETS_DIR/icon-1024.png, $ASSETS_DIR/AppIcon.icns"

@@ -1,0 +1,8 @@
+[package]
+name = "netstatus"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+netdev = "0.46"
+serde = { version = "1", features = ["derive"] }
