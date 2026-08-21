@@ -57,6 +57,21 @@ impl PartialStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Tab {
+    Overview,
+    Dns,
+    Reachability,
+    Wifi,
+}
+
+const TABS: [(Tab, &str); 4] = [
+    (Tab::Overview, "Overview"),
+    (Tab::Dns, "DNS"),
+    (Tab::Reachability, "Reachability"),
+    (Tab::Wifi, "Wi-Fi"),
+];
+
 /// Spawns the auto-refresh worker. Collects once immediately, then only
 /// keeps collecting on a timer while `auto_refresh` is true (off by default).
 fn spawn_auto_collector(auto_refresh: Arc<AtomicBool>) -> mpsc::Receiver<StatusField> {
@@ -84,6 +99,7 @@ struct App {
     manual_refresh: mpsc::Sender<()>,
     manual_rx: mpsc::Receiver<StatusField>,
     auto_refresh: Arc<AtomicBool>,
+    active_tab: Tab,
 }
 
 impl App {
@@ -106,6 +122,7 @@ impl App {
             manual_refresh: manual_tx,
             manual_rx,
             auto_refresh,
+            active_tab: Tab::Overview,
         }
     }
 
@@ -230,6 +247,86 @@ fn resolution_table(ui: &mut egui::Ui, resolution: Option<&[netstatus::Resolutio
         });
 }
 
+fn proxy_panel(ui: &mut egui::Ui, proxy: Option<&netstatus::ProxyConfig>) {
+    let Some(proxy) = proxy else {
+        ui.label("Collecting...");
+        return;
+    };
+    let endpoint_line = |label: &str, endpoint: &netstatus::ProxyEndpoint| {
+        if !endpoint.enabled {
+            format!("{label}: off")
+        } else {
+            format!(
+                "{label}: {}:{}",
+                endpoint.host.clone().unwrap_or_else(|| "?".to_string()),
+                endpoint
+                    .port
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "?".to_string())
+            )
+        }
+    };
+    ui.label(endpoint_line("HTTP", &proxy.http));
+    ui.label(endpoint_line("HTTPS", &proxy.https));
+    ui.label(endpoint_line("SOCKS", &proxy.socks));
+    ui.label(match &proxy.pac_url {
+        Some(url) => format!("PAC: {url}"),
+        None => "PAC: off".to_string(),
+    });
+    if !proxy.exceptions.is_empty() {
+        ui.label(format!("Exceptions: {}", proxy.exceptions.join(", ")));
+    }
+}
+
+fn wifi_panel(ui: &mut egui::Ui, wifi: Option<&netstatus::WifiStatus>) {
+    let Some(wifi) = wifi else {
+        ui.label("Collecting...");
+        return;
+    };
+    if !wifi.connected {
+        ui.label("Not connected");
+        return;
+    }
+    ui.label(format!(
+        "SSID: {}",
+        wifi.ssid.clone().unwrap_or_else(|| "-".into())
+    ));
+    ui.label(format!(
+        "Channel: {}",
+        wifi.channel.clone().unwrap_or_else(|| "-".into())
+    ));
+    ui.label(format!(
+        "Signal: {}",
+        wifi.signal_dbm
+            .map(|d| format!("{d} dBm"))
+            .unwrap_or_else(|| "-".into())
+    ));
+    ui.label(format!(
+        "Noise: {}",
+        wifi.noise_dbm
+            .map(|d| format!("{d} dBm"))
+            .unwrap_or_else(|| "-".into())
+    ));
+    ui.label(format!(
+        "Security: {}",
+        wifi.security.clone().unwrap_or_else(|| "-".into())
+    ));
+    ui.label(format!(
+        "PHY mode: {}",
+        wifi.phy_mode.clone().unwrap_or_else(|| "-".into())
+    ));
+}
+
+fn ip_stack_label(ip_stack: Option<netstatus::IpStack>) -> &'static str {
+    match ip_stack {
+        None => "Collecting...",
+        Some(netstatus::IpStack::Ipv4Only) => "IPv4 only",
+        Some(netstatus::IpStack::Ipv6Only) => "IPv6 only",
+        Some(netstatus::IpStack::DualStack) => "Dual-stack (IPv4 + IPv6)",
+        Some(netstatus::IpStack::None) => "No routable address",
+    }
+}
+
 fn ping_table(ui: &mut egui::Ui, targets: &[netstatus::PingResult]) {
     TableBuilder::new(ui)
         .striped(true)
@@ -302,6 +399,16 @@ impl eframe::App for App {
             });
         });
 
+        egui::Panel::top("tabs").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                for (tab, label) in TABS {
+                    if ui.selectable_label(self.active_tab == tab, label).clicked() {
+                        self.active_tab = tab;
+                    }
+                }
+            });
+        });
+
         if !self.status.has_any() {
             egui::CentralPanel::default().show(ui, |ui| {
                 ui.label("Collecting network status...");
@@ -310,93 +417,118 @@ impl eframe::App for App {
         }
 
         let status = self.status.clone();
-        egui::CentralPanel::default().show(ui, |ui| {
-            StripBuilder::new(ui)
-                .size(Size::relative(0.32))
-                .size(Size::relative(0.34))
-                .size(Size::remainder())
-                .horizontal(|mut strip| {
-                    strip.cell(|ui| {
-                        panel(ui, "Interfaces", |ui| {
-                            interfaces_table(ui, status.interfaces.as_deref())
+        egui::CentralPanel::default().show(ui, |ui| match self.active_tab {
+            Tab::Overview => {
+                StripBuilder::new(ui)
+                    .size(Size::relative(0.34))
+                    .size(Size::relative(0.33))
+                    .size(Size::remainder())
+                    .horizontal(|mut strip| {
+                        strip.cell(|ui| {
+                            panel(ui, "Interfaces", |ui| {
+                                interfaces_table(ui, status.interfaces.as_deref())
+                            });
+                        });
+                        strip.cell(|ui| {
+                            panel(ui, "VPN / Tunnel", |ui| {
+                                let Some(vpn) = status.vpn.as_ref() else {
+                                    ui.label("Collecting...");
+                                    return;
+                                };
+                                ui.label(format!(
+                                    "Primary interface: {}",
+                                    vpn.primary_interface
+                                        .clone()
+                                        .unwrap_or_else(|| "unknown".into())
+                                ));
+                                ui.colored_label(
+                                    if vpn.connected { GOOD } else { BAD },
+                                    format!("VPN connected: {}", vpn.connected),
+                                );
+                                ui.label(format!("Split tunnel: {}", vpn.split_tunnel));
+                                ui.label(format!(
+                                    "Split DNS: {}",
+                                    status
+                                        .split_dns
+                                        .map(|b| b.to_string())
+                                        .unwrap_or_else(|| "collecting...".into())
+                                ));
+                                if !vpn.tunnels.is_empty() {
+                                    ui.label(format!("Tunnels: {}", vpn.tunnels.join(", ")));
+                                }
+                            });
+                        });
+                        strip.cell(|ui| {
+                            StripBuilder::new(ui)
+                                .size(Size::relative(0.5))
+                                .size(Size::relative(0.3))
+                                .size(Size::remainder())
+                                .vertical(|mut strip| {
+                                    strip.cell(|ui| {
+                                        panel(ui, "Proxy", |ui| {
+                                            proxy_panel(ui, status.proxy.as_ref())
+                                        });
+                                    });
+                                    strip.cell(|ui| {
+                                        panel(ui, "Wi-Fi", |ui| {
+                                            wifi_panel(ui, status.wifi.as_ref())
+                                        });
+                                    });
+                                    strip.cell(|ui| {
+                                        panel(ui, "IP stack", |ui| {
+                                            ui.label(ip_stack_label(status.ip_stack));
+                                        });
+                                    });
+                                });
                         });
                     });
-
-                    strip.cell(|ui| {
-                        StripBuilder::new(ui)
-                            .size(Size::relative(0.22))
-                            .size(Size::relative(0.28))
-                            .size(Size::remainder())
-                            .vertical(|mut strip| {
-                                strip.cell(|ui| {
-                                    panel(ui, "VPN / Tunnel", |ui| {
-                                        let Some(vpn) = status.vpn.as_ref() else {
-                                            ui.label("Collecting...");
-                                            return;
-                                        };
-                                        ui.label(format!(
-                                            "Primary interface: {}",
-                                            vpn.primary_interface
-                                                .clone()
-                                                .unwrap_or_else(|| "unknown".into())
-                                        ));
-                                        ui.colored_label(
-                                            if vpn.connected { GOOD } else { BAD },
-                                            format!("VPN connected: {}", vpn.connected),
-                                        );
-                                        ui.label(format!("Split tunnel: {}", vpn.split_tunnel));
-                                        ui.label(format!(
-                                            "Split DNS: {}",
-                                            status
-                                                .split_dns
-                                                .map(|b| b.to_string())
-                                                .unwrap_or_else(|| "collecting...".into())
-                                        ));
-                                        if !vpn.tunnels.is_empty() {
-                                            ui.label(format!(
-                                                "Tunnels: {}",
-                                                vpn.tunnels.join(", ")
-                                            ));
-                                        }
-                                    });
-                                });
-                                strip.cell(|ui| {
-                                    panel(ui, "DNS resolvers", |ui| {
-                                        dns_resolvers_table(ui, status.resolvers.as_deref())
-                                    });
-                                });
-                                strip.cell(|ui| {
-                                    panel(ui, "DNS resolution", |ui| {
-                                        resolution_table(ui, status.resolution.as_deref())
-                                    });
-                                });
+            }
+            Tab::Dns => {
+                StripBuilder::new(ui)
+                    .size(Size::relative(0.5))
+                    .size(Size::remainder())
+                    .horizontal(|mut strip| {
+                        strip.cell(|ui| {
+                            panel(ui, "DNS resolvers", |ui| {
+                                dns_resolvers_table(ui, status.resolvers.as_deref())
                             });
-                    });
-
-                    strip.cell(|ui| {
-                        StripBuilder::new(ui)
-                            .size(Size::relative(0.5))
-                            .size(Size::remainder())
-                            .vertical(|mut strip| {
-                                strip.cell(|ui| {
-                                    panel(ui, "Reachability (IPs)", |ui| {
-                                        ping_table(
-                                            ui,
-                                            status.reachability.as_deref().unwrap_or(&[]),
-                                        )
-                                    });
-                                });
-                                strip.cell(|ui| {
-                                    panel(ui, "Reachability (domains, TCP:443)", |ui| {
-                                        connect_table(
-                                            ui,
-                                            status.domain_reachability.as_deref().unwrap_or(&[]),
-                                        )
-                                    });
-                                });
+                        });
+                        strip.cell(|ui| {
+                            panel(ui, "DNS resolution", |ui| {
+                                resolution_table(ui, status.resolution.as_deref())
                             });
+                        });
                     });
-                });
+            }
+            Tab::Reachability => {
+                StripBuilder::new(ui)
+                    .size(Size::relative(0.34))
+                    .size(Size::relative(0.33))
+                    .size(Size::remainder())
+                    .horizontal(|mut strip| {
+                        strip.cell(|ui| {
+                            panel(ui, "Reachability (IPv4)", |ui| {
+                                ping_table(ui, status.reachability.as_deref().unwrap_or(&[]))
+                            });
+                        });
+                        strip.cell(|ui| {
+                            panel(ui, "Reachability (IPv6)", |ui| {
+                                ping_table(ui, status.reachability_v6.as_deref().unwrap_or(&[]))
+                            });
+                        });
+                        strip.cell(|ui| {
+                            panel(ui, "Reachability (domains, TCP:443)", |ui| {
+                                connect_table(
+                                    ui,
+                                    status.domain_reachability.as_deref().unwrap_or(&[]),
+                                )
+                            });
+                        });
+                    });
+            }
+            Tab::Wifi => {
+                panel(ui, "Wi-Fi", |ui| wifi_panel(ui, status.wifi.as_ref()));
+            }
         });
     }
 }
