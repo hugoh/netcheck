@@ -72,6 +72,18 @@ const TABS: [(Tab, &str); 4] = [
     (Tab::Wifi, "Wi-Fi"),
 ];
 
+impl Tab {
+    fn from_digit(n: u8) -> Option<Tab> {
+        match n {
+            1 => Some(Tab::Overview),
+            2 => Some(Tab::Dns),
+            3 => Some(Tab::Reachability),
+            4 => Some(Tab::Wifi),
+            _ => None,
+        }
+    }
+}
+
 /// Spawns the auto-refresh worker. Collects once immediately, then only
 /// keeps collecting on a timer while `auto_refresh` is true (off by default).
 fn spawn_auto_collector(auto_refresh: Arc<AtomicBool>) -> mpsc::Receiver<StatusField> {
@@ -442,6 +454,18 @@ impl eframe::App for App {
         if ui.ctx().input(|i| i.key_pressed(egui::Key::R)) {
             let _ = self.manual_refresh.send(());
         }
+        for (digit, key) in [
+            (1, egui::Key::Num1),
+            (2, egui::Key::Num2),
+            (3, egui::Key::Num3),
+            (4, egui::Key::Num4),
+        ] {
+            if ui.ctx().input(|i| i.key_pressed(key))
+                && let Some(tab) = Tab::from_digit(digit)
+            {
+                self.active_tab = tab;
+            }
+        }
 
         egui::Panel::top("header").show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -461,9 +485,10 @@ impl eframe::App for App {
 
         egui::Panel::top("tabs").show(ui, |ui| {
             ui.horizontal(|ui| {
-                for (tab, label) in TABS {
-                    if ui.selectable_label(self.active_tab == tab, label).clicked() {
-                        self.active_tab = tab;
+                for (i, (tab, label)) in TABS.iter().enumerate() {
+                    let text = format!("[{}] {label}", i + 1);
+                    if ui.selectable_label(self.active_tab == *tab, text).clicked() {
+                        self.active_tab = *tab;
                     }
                 }
             });
