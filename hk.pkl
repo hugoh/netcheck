@@ -15,18 +15,18 @@ local linters = new Mapping<String, Step> {
     ...Base.shell
     ["cargo_fmt"] = {
         glob = List("**/*.rs")
-        check = "cargo fmt --all -- --check"
+        check = "mise run check:cargo-fmt"
         fix = "cargo fmt --all"
         profiles = List("!ci")
     }
     ["cargo_clippy"] = {
         glob = List("**/*.rs", "**/Cargo.toml")
-        check = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
+        check = "mise run check:cargo-clippy"
         profiles = List("!ci")
     }
     ["cargo_test"] = {
         glob = List("**/*.rs", "**/Cargo.toml")
-        check = "cargo test --workspace"
+        check = "mise run check:cargo-test"
         profiles = List("!ci")
     }
     // Deny-listed licenses/duplicate-version/unknown-source lints, config
@@ -35,13 +35,13 @@ local linters = new Mapping<String, Step> {
     // the Rust toolchain (or these cargo subcommands) installed.
     ["cargo_deny"] = {
         glob = List("**/Cargo.toml", "**/Cargo.lock", "deny.toml")
-        check = "cargo deny check"
+        check = "mise run check:cargo-deny"
         profiles = List("!ci")
     }
     // RustSec advisory-database scan against Cargo.lock.
     ["cargo_audit"] = {
         glob = List("**/Cargo.lock")
-        check = "cargo audit"
+        check = "mise run check:cargo-audit"
         profiles = List("!ci")
     }
     // Plain `cog check` (whole history), not `--from-latest-tag`: this repo

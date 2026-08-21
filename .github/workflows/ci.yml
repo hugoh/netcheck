@@ -44,15 +44,15 @@ jobs:
       - name: Cargo build
         run: cargo build --workspace --locked
       - name: Cargo fmt
-        run: cargo fmt --all -- --check
+        run: mise run check:cargo-fmt
       - name: Cargo clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: mise run check:cargo-clippy
       - name: Cargo test
-        run: cargo test --workspace
+        run: mise run check:cargo-test
       - name: Cargo deny
-        run: cargo deny check
+        run: mise run check:cargo-deny
       - name: Cargo audit
-        run: cargo audit
+        run: mise run check:cargo-audit
       - name: Swift build
         working-directory: apps/NetCheckMac
         run: swift build -c release

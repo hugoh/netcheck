@@ -55,3 +55,33 @@ run = "cargo run -p netcheck-gui"
 description = "Build (if needed) and launch the dev NetCheckMac.app"
 depends = ["build:app"]
 run = "open target/dev-app/NetCheckMac.app"
+
+[tasks."check:cargo-fmt"]
+description = "Check Rust formatting"
+run = "cargo fmt --all -- --check"
+sources = ["**/*.rs"]
+outputs = { auto = true }
+
+[tasks."check:cargo-clippy"]
+description = "Lint Rust with clippy"
+run = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
+sources = ["**/*.rs", "**/Cargo.toml", "Cargo.lock"]
+outputs = { auto = true }
+
+[tasks."check:cargo-test"]
+description = "Run the Rust test suite"
+run = "cargo test --workspace"
+sources = ["**/*.rs", "**/Cargo.toml", "Cargo.lock"]
+outputs = { auto = true }
+
+[tasks."check:cargo-deny"]
+description = "Check licenses/duplicate-versions/unknown-sources via cargo-deny"
+run = "cargo deny check"
+sources = ["**/Cargo.toml", "Cargo.lock", "deny.toml"]
+outputs = { auto = true }
+
+[tasks."check:cargo-audit"]
+description = "Scan Cargo.lock against RustSec advisories"
+run = "cargo audit"
+sources = ["Cargo.lock"]
+outputs = { auto = true }
