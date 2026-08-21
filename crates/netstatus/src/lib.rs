@@ -11,7 +11,10 @@ mod wifi;
 
 pub use connect::{ConnectResult, connect, connect_all};
 pub use dns::{Resolver, has_split_dns, list_resolvers};
-pub use interfaces::{Interface, list_interfaces};
+pub use interfaces::{
+    AddressClass, Interface, InterfaceClass, classify_address, classify_interface,
+    list_interfaces,
+};
 pub use ip_stack::{IpStack, detect_ip_stack};
 pub use proxy::{ProxyConfig, ProxyEndpoint, proxy_config};
 pub use reachability::{PingResult, ping, ping_all};

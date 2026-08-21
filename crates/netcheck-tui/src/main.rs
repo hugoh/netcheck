@@ -163,14 +163,29 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Re
     Ok(())
 }
 
+fn interface_class_label(class: netstatus::InterfaceClass) -> (&'static str, Color) {
+    match class {
+        netstatus::InterfaceClass::Down => ("DOWN            ", Color::DarkGray),
+        netstatus::InterfaceClass::Unaddressed => ("UP, NO ADDRESS  ", Color::Red),
+        netstatus::InterfaceClass::LinkLocalOnly => ("UP, LINK-LOCAL  ", Color::Yellow),
+        netstatus::InterfaceClass::Routable => ("UP, ROUTABLE    ", Color::Green),
+    }
+}
+
+fn sorted_non_loopback(interfaces: &[netstatus::Interface]) -> Vec<&netstatus::Interface> {
+    let mut interfaces: Vec<&netstatus::Interface> =
+        interfaces.iter().filter(|i| !i.loopback).collect();
+    interfaces.sort_by_key(|i| netstatus::classify_interface(i));
+    interfaces
+}
+
 fn interfaces_list(interfaces: Option<&[netstatus::Interface]>) -> List<'static> {
     let items: Vec<ListItem> = match interfaces {
         None => vec![ListItem::new("Collecting...")],
-        Some(interfaces) => interfaces
-            .iter()
-            .filter(|i| !i.loopback)
+        Some(interfaces) => sorted_non_loopback(interfaces)
+            .into_iter()
             .map(|i| {
-                let color = if i.up { Color::Green } else { Color::DarkGray };
+                let (label, color) = interface_class_label(netstatus::classify_interface(i));
                 let addrs = if i.addresses.is_empty() {
                     "-".to_string()
                 } else {
@@ -179,15 +194,54 @@ fn interfaces_list(interfaces: Option<&[netstatus::Interface]>) -> List<'static>
                 ListItem::new(Line::from(vec![
                     Span::styled(
                         format!("{:<8}", i.name),
-                        Style::default().fg(color).add_modifier(Modifier::BOLD),
+                        Style::default().add_modifier(Modifier::BOLD),
                     ),
-                    Span::raw(if i.up { "UP   " } else { "DOWN " }),
+                    Span::styled(label, Style::default().fg(color)),
                     Span::raw(addrs),
                 ]))
             })
             .collect(),
     };
     List::new(items).block(Block::default().borders(Borders::ALL).title("Interfaces"))
+}
+
+fn interface_detail_list(interfaces: Option<&[netstatus::Interface]>) -> List<'static> {
+    let items: Vec<ListItem> = match interfaces {
+        None => vec![ListItem::new("Collecting...")],
+        Some(interfaces) => sorted_non_loopback(interfaces)
+            .into_iter()
+            .flat_map(|i| {
+                let header = ListItem::new(Line::from(Span::styled(
+                    i.name.clone(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                )));
+                let addr_lines = if i.addresses.is_empty() {
+                    vec![ListItem::new(Line::from(Span::raw("  (no addresses)")))]
+                } else {
+                    i.addresses
+                        .iter()
+                        .map(|addr| {
+                            let (tag, color) = match netstatus::classify_address(addr) {
+                                netstatus::AddressClass::LinkLocal => ("link-local", Color::Yellow),
+                                netstatus::AddressClass::RoutableV4 => ("routable v4", Color::Green),
+                                netstatus::AddressClass::RoutableV6 => ("routable v6", Color::Green),
+                            };
+                            ListItem::new(Line::from(vec![
+                                Span::raw(format!("  {addr:<28}")),
+                                Span::styled(tag, Style::default().fg(color)),
+                            ]))
+                        })
+                        .collect()
+                };
+                std::iter::once(header).chain(addr_lines)
+            })
+            .collect(),
+    };
+    List::new(items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Interface detail"),
+    )
 }
 
 fn vpn_paragraph(
@@ -446,29 +500,37 @@ fn draw(
                 Tab::Overview => {
                     let cols = Layout::default()
                         .direction(Direction::Horizontal)
-                        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                        .constraints([
+                            Constraint::Percentage(40),
+                            Constraint::Percentage(30),
+                            Constraint::Percentage(30),
+                        ])
                         .split(rows[1]);
                     let left = Layout::default()
                         .direction(Direction::Vertical)
-                        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+                        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
                         .split(cols[0]);
+                    let middle = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                        .split(cols[1]);
                     let right = Layout::default()
                         .direction(Direction::Vertical)
-                        .constraints([
-                            Constraint::Percentage(45),
-                            Constraint::Percentage(35),
-                            Constraint::Percentage(20),
-                        ])
-                        .split(cols[1]);
+                        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+                        .split(cols[2]);
 
                     frame.render_widget(interfaces_list(status.interfaces.as_deref()), left[0]);
                     frame.render_widget(
-                        vpn_paragraph(status.vpn.as_ref(), status.split_dns),
+                        interface_detail_list(status.interfaces.as_deref()),
                         left[1],
                     );
-                    frame.render_widget(proxy_paragraph(status.proxy.as_ref()), right[0]);
-                    frame.render_widget(wifi_paragraph(status.wifi.as_ref()), right[1]);
-                    frame.render_widget(ip_stack_paragraph(status.ip_stack), right[2]);
+                    frame.render_widget(
+                        vpn_paragraph(status.vpn.as_ref(), status.split_dns),
+                        middle[0],
+                    );
+                    frame.render_widget(proxy_paragraph(status.proxy.as_ref()), middle[1]);
+                    frame.render_widget(wifi_paragraph(status.wifi.as_ref()), right[0]);
+                    frame.render_widget(ip_stack_paragraph(status.ip_stack), right[1]);
                 }
                 Tab::Dns => {
                     let cols = Layout::default()

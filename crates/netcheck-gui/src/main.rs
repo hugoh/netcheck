@@ -158,6 +158,31 @@ fn panel(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&mut egui::Ui
         });
 }
 
+fn interface_class_color(class: netstatus::InterfaceClass) -> egui::Color32 {
+    match class {
+        netstatus::InterfaceClass::Down => egui::Color32::from_rgb(120, 120, 120),
+        netstatus::InterfaceClass::Unaddressed => BAD,
+        netstatus::InterfaceClass::LinkLocalOnly => egui::Color32::from_rgb(220, 180, 60),
+        netstatus::InterfaceClass::Routable => GOOD,
+    }
+}
+
+fn interface_class_label(class: netstatus::InterfaceClass) -> &'static str {
+    match class {
+        netstatus::InterfaceClass::Down => "Down",
+        netstatus::InterfaceClass::Unaddressed => "Up, no address",
+        netstatus::InterfaceClass::LinkLocalOnly => "Up, link-local only",
+        netstatus::InterfaceClass::Routable => "Up, routable",
+    }
+}
+
+fn sorted_non_loopback(interfaces: &[netstatus::Interface]) -> Vec<&netstatus::Interface> {
+    let mut interfaces: Vec<&netstatus::Interface> =
+        interfaces.iter().filter(|i| !i.loopback).collect();
+    interfaces.sort_by_key(|i| netstatus::classify_interface(i));
+    interfaces
+}
+
 fn interfaces_table(ui: &mut egui::Ui, interfaces: Option<&[netstatus::Interface]>) {
     let Some(interfaces) = interfaces else {
         ui.label("Collecting...");
@@ -166,13 +191,18 @@ fn interfaces_table(ui: &mut egui::Ui, interfaces: Option<&[netstatus::Interface
     TableBuilder::new(ui)
         .striped(true)
         .column(Column::auto().at_least(50.0))
+        .column(Column::auto().at_least(120.0))
         .column(Column::remainder())
         .body(|body| {
-            let rows: Vec<_> = interfaces.iter().filter(|i| !i.loopback).collect();
+            let rows = sorted_non_loopback(interfaces);
             body.rows(18.0, rows.len(), |mut row| {
                 let iface = rows[row.index()];
+                let class = netstatus::classify_interface(iface);
                 row.col(|ui| {
-                    ui.colored_label(if iface.up { GOOD } else { BAD }, &iface.name);
+                    ui.label(&iface.name);
+                });
+                row.col(|ui| {
+                    ui.colored_label(interface_class_color(class), interface_class_label(class));
                 });
                 row.col(|ui| {
                     ui.label(if iface.addresses.is_empty() {
@@ -183,6 +213,33 @@ fn interfaces_table(ui: &mut egui::Ui, interfaces: Option<&[netstatus::Interface
                 });
             });
         });
+}
+
+fn interface_detail_panel(ui: &mut egui::Ui, interfaces: Option<&[netstatus::Interface]>) {
+    let Some(interfaces) = interfaces else {
+        ui.label("Collecting...");
+        return;
+    };
+    for iface in sorted_non_loopback(interfaces) {
+        ui.label(egui::RichText::new(&iface.name).strong());
+        if iface.addresses.is_empty() {
+            ui.label("  (no addresses)");
+        } else {
+            for addr in &iface.addresses {
+                let (tag, color) = match netstatus::classify_address(addr) {
+                    netstatus::AddressClass::LinkLocal => {
+                        ("link-local", egui::Color32::from_rgb(220, 180, 60))
+                    }
+                    netstatus::AddressClass::RoutableV4 => ("routable v4", GOOD),
+                    netstatus::AddressClass::RoutableV6 => ("routable v6", GOOD),
+                };
+                ui.horizontal(|ui| {
+                    ui.label(format!("  {addr}"));
+                    ui.colored_label(color, tag);
+                });
+            }
+        }
+    }
 }
 
 fn dns_resolvers_table(ui: &mut egui::Ui, resolvers: Option<&[netstatus::Resolver]>) {
@@ -420,14 +477,29 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ui, |ui| match self.active_tab {
             Tab::Overview => {
                 StripBuilder::new(ui)
-                    .size(Size::relative(0.34))
-                    .size(Size::relative(0.33))
+                    .size(Size::relative(0.4))
+                    .size(Size::relative(0.3))
                     .size(Size::remainder())
                     .horizontal(|mut strip| {
                         strip.cell(|ui| {
-                            panel(ui, "Interfaces", |ui| {
-                                interfaces_table(ui, status.interfaces.as_deref())
-                            });
+                            StripBuilder::new(ui)
+                                .size(Size::relative(0.45))
+                                .size(Size::remainder())
+                                .vertical(|mut strip| {
+                                    strip.cell(|ui| {
+                                        panel(ui, "Interfaces", |ui| {
+                                            interfaces_table(ui, status.interfaces.as_deref())
+                                        });
+                                    });
+                                    strip.cell(|ui| {
+                                        panel(ui, "Interface detail", |ui| {
+                                            interface_detail_panel(
+                                                ui,
+                                                status.interfaces.as_deref(),
+                                            )
+                                        });
+                                    });
+                                });
                         });
                         strip.cell(|ui| {
                             panel(ui, "VPN / Tunnel", |ui| {

@@ -1,5 +1,5 @@
 use serde::Serialize;
-use std::process::Command;
+use std::net::IpAddr;
 use std::time::Duration;
 
 /// Result of a single ping probe against a target host.
@@ -10,40 +10,33 @@ pub struct PingResult {
     pub rtt_ms: Option<f64>,
 }
 
-pub(crate) fn parse_ping_output(text: &str) -> Option<Duration> {
-    let time_str = text
-        .lines()
-        .find_map(|line| line.split_whitespace().find(|w| w.starts_with("time=")))?
-        .strip_prefix("time=")?;
-    let ms: f64 = time_str.parse().ok()?;
-    Some(Duration::from_secs_f64(ms / 1000.0))
+const PING_PAYLOAD: [u8; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
+const PING_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Sends one ICMP echo request via a native, unprivileged ICMP/DGRAM socket
+/// (no `ping`/`ping6` subprocess), bounded to `PING_TIMEOUT`. `surge_ping`
+/// picks ICMPv4 or ICMPv6 automatically based on `addr`'s family. Spins up a
+/// throwaway single-threaded tokio runtime per call so this stays a plain
+/// synchronous function — `ping_all`'s thread::scope-based concurrency is
+/// unchanged.
+fn ping_via_icmp(addr: IpAddr) -> Option<Duration> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()?;
+    runtime.block_on(async {
+        tokio::time::timeout(PING_TIMEOUT, surge_ping::ping(addr, &PING_PAYLOAD))
+            .await
+            .ok()?
+            .ok()
+            .map(|(_packet, duration)| duration)
+    })
 }
 
-/// Returns `true` if `target` is an IPv6 literal (contains a `:`), `false`
-/// for IPv4.
-pub(crate) fn is_ipv6(target: &str) -> bool {
-    target.contains(':')
-}
-
-/// Pings `target` once with a 1 second timeout.
-///
-/// IPv6 targets are shelled to `/sbin/ping6` rather than `/sbin/ping`, which
-/// cannot resolve IPv6 literals and rejects `-6`. `ping6` has no `-t
-/// <timeout>` equivalent (its `-t` is an unrelated bare flag), so v6 probes
-/// run with `-c 1` alone and no explicit timeout bound.
+/// Pings `target` once with a 1 second timeout. `target` must be a literal
+/// IPv4 or IPv6 address; an unparseable target is reported as unreachable.
 pub fn ping(target: &str) -> PingResult {
-    let output = if is_ipv6(target) {
-        Command::new("/sbin/ping6").args(["-c", "1", target]).output()
-    } else {
-        Command::new("/sbin/ping")
-            .args(["-c", "1", "-t", "1", target])
-            .output()
-    };
-
-    let rtt = output
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| parse_ping_output(&String::from_utf8_lossy(&o.stdout)));
+    let rtt = target.parse::<IpAddr>().ok().and_then(ping_via_icmp);
 
     PingResult {
         target: target.to_string(),
@@ -68,36 +61,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_round_trip_time_from_successful_ping() {
-        let output = "PING 1.1.1.1 (1.1.1.1): 56 data bytes\n\
-                       64 bytes from 1.1.1.1: icmp_seq=0 ttl=47 time=28.211 ms\n\
-                       \n\
-                       --- 1.1.1.1 ping statistics ---\n\
-                       1 packets transmitted, 1 packets received, 0.0% packet loss\n";
-        let rtt = parse_ping_output(output).expect("should parse rtt");
-        assert!((rtt.as_secs_f64() * 1000.0 - 28.211).abs() < 1e-6);
-    }
-
-    #[test]
-    fn returns_none_when_no_reply_line_present() {
-        let output = "PING 10.255.255.1 (10.255.255.1): 56 data bytes\n\
-                       \n\
-                       --- 10.255.255.1 ping statistics ---\n\
-                       1 packets transmitted, 0 packets received, 100.0% packet loss\n";
-        assert_eq!(parse_ping_output(output), None);
-    }
-
-    #[test]
-    fn detects_ipv4_targets() {
-        assert!(!is_ipv6("1.1.1.1"));
-        assert!(!is_ipv6("8.8.4.4"));
-        assert!(!is_ipv6("208.67.222.222"));
-    }
-
-    #[test]
-    fn detects_ipv6_targets() {
-        assert!(is_ipv6("2606:4700:4700::1111"));
-        assert!(is_ipv6("2001:4860:4860::8888"));
-        assert!(is_ipv6("::1"));
+    fn unparseable_target_is_reported_unreachable() {
+        let result = ping("not-an-ip-address");
+        assert_eq!(
+            result,
+            PingResult {
+                target: "not-an-ip-address".to_string(),
+                reachable: false,
+                rtt_ms: None,
+            }
+        );
     }
 }

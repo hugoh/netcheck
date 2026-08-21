@@ -34,7 +34,50 @@ pub(crate) fn build_interface(raw: RawInterface) -> Interface {
 
 pub(crate) fn is_link_local(address: &str) -> bool {
     let host = address.split('/').next().unwrap_or(address);
-    host.to_ascii_lowercase().starts_with("fe80:")
+    let host = host.to_ascii_lowercase();
+    host.starts_with("fe80:") || host.starts_with("169.254.")
+}
+
+/// Coarse operational classification of an interface, derived from its
+/// up/down state and the routability of its addresses. Declared
+/// online-to-offline so the derived `Ord` sorts interfaces that way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub enum InterfaceClass {
+    Routable,
+    LinkLocalOnly,
+    Unaddressed,
+    Down,
+}
+
+pub fn classify_interface(iface: &Interface) -> InterfaceClass {
+    if !iface.up {
+        return InterfaceClass::Down;
+    }
+    if iface.addresses.is_empty() {
+        return InterfaceClass::Unaddressed;
+    }
+    if iface.addresses.iter().all(|a| is_link_local(a)) {
+        return InterfaceClass::LinkLocalOnly;
+    }
+    InterfaceClass::Routable
+}
+
+/// Classification of a single address, for per-address display.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub enum AddressClass {
+    LinkLocal,
+    RoutableV4,
+    RoutableV6,
+}
+
+pub fn classify_address(address: &str) -> AddressClass {
+    if is_link_local(address) {
+        AddressClass::LinkLocal
+    } else if address.contains(':') {
+        AddressClass::RoutableV6
+    } else {
+        AddressClass::RoutableV4
+    }
 }
 
 /// Returns the status of every network interface on the host.
@@ -101,6 +144,71 @@ mod tests {
                 addresses: vec![],
             }
         );
+    }
+
+    #[test]
+    fn is_link_local_detects_ipv4_self_assigned() {
+        assert!(is_link_local("169.254.1.2/16"));
+        assert!(!is_link_local("192.168.1.1/24"));
+    }
+
+    #[test]
+    fn classify_down_interface() {
+        let iface = Interface {
+            name: "en1".to_string(),
+            up: false,
+            loopback: false,
+            addresses: vec!["192.168.1.5/24".to_string()],
+        };
+        assert_eq!(classify_interface(&iface), InterfaceClass::Down);
+    }
+
+    #[test]
+    fn classify_up_with_no_addresses() {
+        let iface = Interface {
+            name: "en1".to_string(),
+            up: true,
+            loopback: false,
+            addresses: vec![],
+        };
+        assert_eq!(classify_interface(&iface), InterfaceClass::Unaddressed);
+    }
+
+    #[test]
+    fn classify_up_with_only_link_local_addresses() {
+        let iface = Interface {
+            name: "en1".to_string(),
+            up: true,
+            loopback: false,
+            addresses: vec!["fe80::1/64".to_string(), "169.254.1.2/16".to_string()],
+        };
+        assert_eq!(classify_interface(&iface), InterfaceClass::LinkLocalOnly);
+    }
+
+    #[test]
+    fn classify_up_with_routable_address() {
+        let iface = Interface {
+            name: "en0".to_string(),
+            up: true,
+            loopback: false,
+            addresses: vec!["fe80::1/64".to_string(), "192.168.1.5/24".to_string()],
+        };
+        assert_eq!(classify_interface(&iface), InterfaceClass::Routable);
+    }
+
+    #[test]
+    fn interface_class_orders_online_to_offline() {
+        assert!(InterfaceClass::Routable < InterfaceClass::LinkLocalOnly);
+        assert!(InterfaceClass::LinkLocalOnly < InterfaceClass::Unaddressed);
+        assert!(InterfaceClass::Unaddressed < InterfaceClass::Down);
+    }
+
+    #[test]
+    fn classify_address_variants() {
+        assert_eq!(classify_address("fe80::1/64"), AddressClass::LinkLocal);
+        assert_eq!(classify_address("169.254.1.2/16"), AddressClass::LinkLocal);
+        assert_eq!(classify_address("192.168.1.5/24"), AddressClass::RoutableV4);
+        assert_eq!(classify_address("2001:db8::1/64"), AddressClass::RoutableV6);
     }
 
     #[test]
