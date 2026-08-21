@@ -38,7 +38,7 @@ jobs:
         uses: cocogitto/cocogitto-action@9a9fe03b31c47444290c0d7f9b1ee1b44ee13f20 # v4.1.0
         with:
           command: bump
-          args: ${{ inputs.bump_type == 'auto' && '--auto' || format('--{0}', inputs.bump_type) }}
+          args: --${{ inputs.bump_type || 'auto' }}
 
       - name: Determine tag
         id: tag
