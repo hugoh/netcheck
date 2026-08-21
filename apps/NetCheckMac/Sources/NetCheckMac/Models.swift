@@ -49,12 +49,47 @@ struct ConnectResult: Codable, Identifiable {
     let rttMs: Double?
 }
 
+struct ProxyEndpoint: Codable {
+    let enabled: Bool
+    let host: String?
+    let port: UInt16?
+}
+
+struct ProxyConfig: Codable {
+    let http: ProxyEndpoint
+    let https: ProxyEndpoint
+    let socks: ProxyEndpoint
+    let pacUrl: String?
+    let exceptions: [String]
+}
+
+struct WifiStatus: Codable {
+    let connected: Bool
+    let ssid: String?
+    let channel: String?
+    let signalDbm: Int?
+    let noiseDbm: Int?
+    let security: String?
+    let phyMode: String?
+}
+
+enum IpStack: String, Codable {
+    case ipv4Only = "Ipv4Only"
+    case ipv6Only = "Ipv6Only"
+    case dualStack = "DualStack"
+    case none = "None"
+}
+
 struct NetworkStatus: Codable {
     let interfaces: [NetInterface]
     let vpn: VpnStatus
     let resolvers: [Resolver]
     let splitDns: Bool
     let reachability: [PingResult]
+    let reachabilityV6: [PingResult]
     let resolution: [ResolutionResult]
     let domainReachability: [ConnectResult]
+    let proxy: ProxyConfig
+    let wifi: WifiStatus
+    let ipStack: IpStack
 }
