@@ -11,7 +11,8 @@ struct Cli {
 enum Command {
     /// Print a full network status snapshot as JSON
     Status,
-    /// Stream each status field as one JSON line, as soon as it's ready
+    /// Stream each status field as NDJSON (one JSON object per line), as
+    /// soon as it's ready
     Stream,
     /// Print network interfaces as JSON
     Interfaces,
