@@ -57,9 +57,9 @@ cat >"$CONTENTS_DIR/Info.plist" <<INFOPLIST
 INFOPLIST
 
 if [ -f "$ROOT_DIR/assets/AppIcon.icns" ]; then
-    cp "$ROOT_DIR/assets/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
+	cp "$ROOT_DIR/assets/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 else
-    echo "No assets/AppIcon.icns found — bundling without a custom icon."
+	echo "No assets/AppIcon.icns found — bundling without a custom icon."
 fi
 
 echo "Ad-hoc signing..."

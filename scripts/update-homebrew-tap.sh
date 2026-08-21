@@ -75,8 +75,8 @@ git config user.name "netcheck-release-bot"
 git config user.email "noreply@hugoh.net"
 git add Casks/netcheck.rb Casks/netcheckmac.rb
 if git diff --cached --quiet; then
-    echo "No changes to publish"
-    exit 0
+	echo "No changes to publish"
+	exit 0
 fi
 git commit -m "chore: update netcheck casks to v${VERSION}"
 git push origin HEAD:main

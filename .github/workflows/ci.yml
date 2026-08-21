@@ -39,6 +39,8 @@ jobs:
       contents: read
     steps:
       - uses: hugoh/gh-workflows/setup@e3deb909891d6fc8089311f2e91e85796eb6c725 # v1.9.2
+      - name: Ensure rustfmt/clippy components
+        run: rustup component add rustfmt clippy
       - name: Cargo build
         run: cargo build --workspace --locked
       - name: Cargo fmt

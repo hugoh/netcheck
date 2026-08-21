@@ -8,7 +8,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="NetCheck"
 BUNDLE_ID="net.hugoh.netcheck"
 VERSION="$(cd "$ROOT_DIR" && cargo metadata --no-deps --format-version=1 |
-    python3 -c "import json,sys; print(next(p['version'] for p in json.load(sys.stdin)['packages'] if p['name']=='netcheck-gui'))")"
+	python3 -c "import json,sys; print(next(p['version'] for p in json.load(sys.stdin)['packages'] if p['name']=='netcheck-gui'))")"
 
 BUILD_DIR="$ROOT_DIR/target/release"
 APP_DIR="$ROOT_DIR/target/${APP_NAME}.app"
@@ -57,9 +57,9 @@ cat >"$CONTENTS_DIR/Info.plist" <<INFOPLIST
 INFOPLIST
 
 if [ -f "$ROOT_DIR/assets/AppIcon.icns" ]; then
-    cp "$ROOT_DIR/assets/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
+	cp "$ROOT_DIR/assets/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 else
-    echo "No assets/AppIcon.icns found — bundling without a custom icon."
+	echo "No assets/AppIcon.icns found — bundling without a custom icon."
 fi
 
 # Ad-hoc sign (identity "-"): no Apple Developer account needed. This
