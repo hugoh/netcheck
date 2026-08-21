@@ -61,7 +61,7 @@ jobs:
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}"
           git push origin "${TAG}"
 
-      - name: Build CLI/TUI release binaries
+      - name: Build CLI/TUI/GUI release binaries
         if: steps.tag.outputs.skip != 'true'
         env:
           TAG: ${{ steps.tag.outputs.tag }}
@@ -70,7 +70,7 @@ jobs:
           cargo build --release --workspace --locked
           mkdir -p dist
           tar -czf "dist/netcheck-${TAG#v}-aarch64-apple-darwin.tar.gz" \
-            -C target/release netcheck netcheck-tui
+            -C target/release netcheck netcheck-tui netcheck-gui
 
       - name: Build & bundle NetCheckMac.app
         if: steps.tag.outputs.skip != 'true'

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct StatusIcon: View {
@@ -111,6 +112,7 @@ struct ContentView: View {
             }
         }
         .background(tabKeyShortcuts)
+        .background(quitKeyShortcut)
     }
 
     /// Hidden buttons carrying keyboard shortcuts 1-4, matching
@@ -122,6 +124,15 @@ struct ContentView: View {
                 .opacity(0)
                 .frame(width: 0, height: 0)
         }
+    }
+
+    /// Plain `q` quits, matching netcheck-tui/-gui — separate from Cmd+Q,
+    /// which SwiftUI already wires to the standard app menu.
+    private var quitKeyShortcut: some View {
+        Button("") { NSApp.terminate(nil) }
+            .keyboardShortcut("q", modifiers: [])
+            .opacity(0)
+            .frame(width: 0, height: 0)
     }
 
     @ViewBuilder

@@ -13,21 +13,21 @@ use std::sync::mpsc;
 /// Well-known public IPs used for reachability probes: Cloudflare, Google,
 /// Quad9, and OpenDNS anycast resolvers.
 pub const DEFAULT_PING_TARGETS: &[&str] = &[
-    "1.1.1.1",
     "1.0.0.1",
-    "8.8.8.8",
+    "1.1.1.1",
     "8.8.4.4",
+    "8.8.8.8",
     "9.9.9.9",
-    "208.67.222.222",
     "208.67.220.220",
+    "208.67.222.222",
 ];
 
 /// Well-known public IPv6 anycast targets: Cloudflare, Google, Quad9.
 pub const DEFAULT_PING_TARGETS_V6: &[&str] = &[
-    "2606:4700:4700::1111",
-    "2606:4700:4700::1001",
-    "2001:4860:4860::8888",
     "2001:4860:4860::8844",
+    "2001:4860:4860::8888",
+    "2606:4700:4700::1001",
+    "2606:4700:4700::1111",
     "2620:fe::fe",
 ];
 

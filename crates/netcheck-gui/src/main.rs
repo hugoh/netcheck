@@ -450,6 +450,9 @@ impl eframe::App for App {
         self.poll();
         ui.ctx().request_repaint_after(Duration::from_millis(300));
 
+        if ui.ctx().input(|i| i.key_pressed(egui::Key::Q)) {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         if ui.ctx().input(|i| i.key_pressed(egui::Key::A)) {
             self.auto_refresh.fetch_xor(true, Ordering::Relaxed);
         }
@@ -473,6 +476,7 @@ impl eframe::App for App {
             ui.horizontal(|ui| {
                 ui.heading("netcheck");
                 ui.label(egui::RichText::new(netstatus::VERSION).weak());
+                ui.label(egui::RichText::new("[q] quit").weak());
                 if ui.button("Refresh now [r]").clicked() {
                     let _ = self.manual_refresh.send(());
                 }

@@ -45,6 +45,7 @@ cask "netcheck" do
 
   binary "netcheck"
   binary "netcheck-tui"
+  binary "netcheck-gui"
 end
 EOF
 

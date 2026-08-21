@@ -5,12 +5,12 @@ use std::time::{Duration, Instant};
 
 /// Well-known domains used to sanity-check that DNS resolution actually works.
 pub const DEFAULT_RESOLUTION_TARGETS: &[&str] = &[
-    "google.com",
+    "amazon.com",
+    "apple.com",
     "cloudflare.com",
     "github.com",
-    "apple.com",
+    "google.com",
     "microsoft.com",
-    "amazon.com",
     "wikipedia.org",
 ];
 
