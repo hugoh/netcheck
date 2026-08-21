@@ -1,6 +1,9 @@
 use crate::interfaces::{Interface, is_link_local};
+use core_foundation::base::{CFType, TCFType};
+use core_foundation::dictionary::CFDictionary;
+use core_foundation::string::CFString;
 use serde::Serialize;
-use std::process::Command;
+use system_configuration::dynamic_store::SCDynamicStoreBuilder;
 
 /// VPN / tunnel status derived from the interface list and the primary
 /// (default-route) interface.
@@ -20,13 +23,18 @@ fn has_routable_address(interface: &Interface) -> bool {
     interface.addresses.iter().any(|a| !is_link_local(a))
 }
 
-/// Parses the "Network interfaces: en0 utun3" trailer line from `scutil --nwi`
-/// and returns the first (primary) interface name.
-pub(crate) fn parse_primary_interface(text: &str) -> Option<String> {
-    text.lines()
-        .find_map(|line| line.trim().strip_prefix("Network interfaces:"))
-        .and_then(|rest| rest.split_whitespace().next())
-        .map(str::to_string)
+/// Reads the primary (default-route) interface name from the System
+/// Configuration dynamic store's global IPv4 state, the same data
+/// `scutil --nwi` derives and prints as its "Network interfaces:" trailer.
+fn primary_interface_from_store() -> Option<String> {
+    let store = SCDynamicStoreBuilder::new("netcheck-vpn").build()?;
+    let value = store.get("State:/Network/Global/IPv4")?;
+    let opaque: CFDictionary = value.downcast_into()?;
+    let dict: CFDictionary<CFString, CFType> =
+        unsafe { CFDictionary::wrap_under_get_rule(opaque.as_concrete_TypeRef()) };
+    dict.find(CFString::from("PrimaryInterface"))
+        .and_then(|v| v.downcast::<CFString>())
+        .map(|s| s.to_string())
 }
 
 pub(crate) fn classify_tunnels(interfaces: &[Interface], primary: Option<&str>) -> VpnStatus {
@@ -47,15 +55,10 @@ pub(crate) fn classify_tunnels(interfaces: &[Interface], primary: Option<&str>) 
     }
 }
 
-/// Runs `scutil --nwi` and combines it with the interface list to determine
-/// VPN/tunnel status.
+/// Combines the dynamic store's primary-interface state with the interface
+/// list to determine VPN/tunnel status.
 pub fn vpn_status(interfaces: &[Interface]) -> VpnStatus {
-    let output = Command::new("scutil")
-        .arg("--nwi")
-        .output()
-        .expect("scutil --nwi should be runnable on macOS");
-    let text = String::from_utf8_lossy(&output.stdout);
-    let primary = parse_primary_interface(&text);
+    let primary = primary_interface_from_store();
     classify_tunnels(interfaces, primary.as_deref())
 }
 
@@ -70,17 +73,6 @@ mod tests {
             loopback: false,
             addresses: addresses.iter().map(|s| s.to_string()).collect(),
         }
-    }
-
-    #[test]
-    fn parse_primary_interface_from_nwi_trailer() {
-        let text = "Network information\n...\nNetwork interfaces: en0 utun3\n";
-        assert_eq!(parse_primary_interface(text), Some("en0".to_string()));
-    }
-
-    #[test]
-    fn parse_primary_interface_missing_returns_none() {
-        assert_eq!(parse_primary_interface("Network information\n"), None);
     }
 
     #[test]

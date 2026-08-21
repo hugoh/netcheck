@@ -1,15 +1,21 @@
+use core_foundation::array::CFArray;
+use core_foundation::base::{CFType, FromVoid};
+use core_foundation::boolean::CFBoolean;
+use std::ffi::c_void;
+use core_foundation::dictionary::CFDictionary;
+use core_foundation::number::CFNumber;
+use core_foundation::string::CFString;
 use serde::Serialize;
-use std::collections::HashMap;
-use std::process::Command;
+use system_configuration::dynamic_store::SCDynamicStoreBuilder;
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
 pub struct ProxyEndpoint {
     pub enabled: bool,
     pub host: Option<String>,
     pub port: Option<u16>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
 pub struct ProxyConfig {
     pub http: ProxyEndpoint,
     pub https: ProxyEndpoint,
@@ -18,71 +24,61 @@ pub struct ProxyConfig {
     pub exceptions: Vec<String>,
 }
 
-pub(crate) fn parse_proxy_config(text: &str) -> ProxyConfig {
-    let mut values: HashMap<&str, &str> = HashMap::new();
-    let mut exceptions = Vec::new();
-    let mut in_exceptions = false;
-    // Depth of nested `<dictionary> {` / `<array> {` blocks (other than
-    // ExceptionsList) currently being skipped, e.g. `scutil --proxy`'s
-    // per-interface `__SCOPED__` dictionary. Their key/value lines must not
-    // fall through into the flat `values` map, or a scoped override could
-    // silently clobber the top-level setting it's meant to be independent
-    // from.
-    let mut skip_depth: u32 = 0;
+type ProxyDict = CFDictionary<CFString, CFType>;
 
-    for line in text.lines() {
-        let trimmed = line.trim();
+fn cf_bool(dict: &ProxyDict, key: &str) -> bool {
+    dict.find(CFString::from(key))
+        .and_then(|v| v.downcast::<CFBoolean>())
+        .map(bool::from)
+        .unwrap_or(false)
+}
 
-        if skip_depth > 0 {
-            if trimmed.ends_with('{') {
-                skip_depth += 1;
-            } else if trimmed == "}" {
-                skip_depth -= 1;
-            }
-            continue;
-        }
+fn cf_string(dict: &ProxyDict, key: &str) -> Option<String> {
+    dict.find(CFString::from(key))
+        .and_then(|v| v.downcast::<CFString>())
+        .map(|s| s.to_string())
+}
 
-        if in_exceptions {
-            if trimmed == "}" {
-                in_exceptions = false;
-            } else if let Some((_, value)) = trimmed.split_once(" : ") {
-                exceptions.push(value.trim().to_string());
-            }
-            continue;
-        }
+fn cf_port(dict: &ProxyDict, key: &str) -> Option<u16> {
+    dict.find(CFString::from(key))
+        .and_then(|v| v.downcast::<CFNumber>())
+        .and_then(|n| n.to_i32())
+        .and_then(|n| u16::try_from(n).ok())
+}
 
-        if trimmed.ends_with("<array> {") || trimmed.ends_with("<dictionary> {") {
-            let key = trimmed.split_once(" : ").map(|(key, _)| key.trim());
-            if key == Some("ExceptionsList") {
-                in_exceptions = true;
-            } else if key.is_some() {
-                // A nested block under a key, e.g. `__SCOPED__ : <dictionary>
-                // {`. The top-level `<dictionary> {` has no key and is left
-                // unskipped so its contents are parsed normally.
-                skip_depth = 1;
-            }
-            continue;
-        }
-
-        if let Some((key, value)) = trimmed.split_once(" : ") {
-            values.insert(key.trim(), value.trim());
-        }
-    }
-
+/// Builds a `ProxyConfig` from the `CFDictionary` returned by
+/// `SCDynamicStore::get_proxies`. Reading typed values straight out of the
+/// dynamic store (rather than parsing `scutil --proxy`'s text dump) means
+/// there is no `__SCOPED__`-style nested-block text to misparse — scoped,
+/// per-interface overrides simply aren't present in `get_proxies()`'s
+/// top-level keys at all.
+pub(crate) fn proxy_config_from_dict(dict: &ProxyDict) -> ProxyConfig {
     let endpoint = |enable_key: &str, host_key: &str, port_key: &str| ProxyEndpoint {
-        enabled: values.get(enable_key) == Some(&"1"),
-        host: values.get(host_key).map(|s| s.to_string()),
-        port: values.get(port_key).and_then(|s| s.parse().ok()),
+        enabled: cf_bool(dict, enable_key),
+        host: cf_string(dict, host_key),
+        port: cf_port(dict, port_key),
     };
+
+    let exceptions = dict
+        .find(CFString::from("ExceptionsList"))
+        .and_then(|v| v.downcast::<CFArray<*const c_void>>())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|ptr| {
+                    let item = unsafe { CFType::from_void(*ptr) };
+                    item.downcast::<CFString>()
+                })
+                .map(|s| s.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
 
     ProxyConfig {
         http: endpoint("HTTPEnable", "HTTPProxy", "HTTPPort"),
         https: endpoint("HTTPSEnable", "HTTPSProxy", "HTTPSPort"),
         socks: endpoint("SOCKSEnable", "SOCKSProxy", "SOCKSPort"),
-        pac_url: if values.get("ProxyAutoConfigEnable") == Some(&"1") {
-            values
-                .get("ProxyAutoConfigURLString")
-                .map(|s| s.to_string())
+        pac_url: if cf_bool(dict, "ProxyAutoConfigEnable") {
+            cf_string(dict, "ProxyAutoConfigURLString")
         } else {
             None
         },
@@ -90,24 +86,36 @@ pub(crate) fn parse_proxy_config(text: &str) -> ProxyConfig {
     }
 }
 
-/// Runs `scutil --proxy` and parses its dictionary dump into a `ProxyConfig`.
+/// Reads the current proxy configuration from the System Configuration
+/// dynamic store (`SCDynamicStoreCopyProxies`), the same data source
+/// `scutil --proxy` prints as text.
 pub fn proxy_config() -> ProxyConfig {
-    let output = Command::new("scutil")
-        .arg("--proxy")
-        .output()
-        .expect("scutil --proxy should be runnable on macOS");
-    let text = String::from_utf8_lossy(&output.stdout);
-    parse_proxy_config(&text)
+    let Some(store) = SCDynamicStoreBuilder::new("netcheck-proxy").build() else {
+        return ProxyConfig::default();
+    };
+    match store.get_proxies() {
+        Some(dict) => proxy_config_from_dict(&dict),
+        None => ProxyConfig::default(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core_foundation::base::TCFType;
+
+    fn dict(pairs: &[(&str, CFType)]) -> ProxyDict {
+        let pairs: Vec<(CFString, CFType)> = pairs
+            .iter()
+            .map(|(k, v)| (CFString::from(*k), v.clone()))
+            .collect();
+        CFDictionary::from_CFType_pairs(&pairs)
+    }
 
     #[test]
     fn no_proxy_configured() {
-        let text = "<dictionary> {\n}\n";
-        let config = parse_proxy_config(text);
+        let d = dict(&[]);
+        let config = proxy_config_from_dict(&d);
         assert!(!config.http.enabled);
         assert!(!config.https.enabled);
         assert!(!config.socks.enabled);
@@ -117,12 +125,15 @@ mod tests {
 
     #[test]
     fn http_proxy_enabled_with_host_and_port() {
-        let text = "<dictionary> {\n  \
-                     HTTPEnable : 1\n  \
-                     HTTPPort : 8080\n  \
-                     HTTPProxy : proxy.example.com\n\
-                     }\n";
-        let config = parse_proxy_config(text);
+        let d = dict(&[
+            ("HTTPEnable", CFBoolean::from(true).as_CFType()),
+            ("HTTPPort", CFNumber::from(8080).as_CFType()),
+            (
+                "HTTPProxy",
+                CFString::from("proxy.example.com").as_CFType(),
+            ),
+        ]);
+        let config = proxy_config_from_dict(&d);
         assert!(config.http.enabled);
         assert_eq!(config.http.host, Some("proxy.example.com".to_string()));
         assert_eq!(config.http.port, Some(8080));
@@ -130,11 +141,14 @@ mod tests {
 
     #[test]
     fn pac_enabled_extracts_url() {
-        let text = "<dictionary> {\n  \
-                     ProxyAutoConfigEnable : 1\n  \
-                     ProxyAutoConfigURLString : http://example.com/proxy.pac\n\
-                     }\n";
-        let config = parse_proxy_config(text);
+        let d = dict(&[
+            ("ProxyAutoConfigEnable", CFBoolean::from(true).as_CFType()),
+            (
+                "ProxyAutoConfigURLString",
+                CFString::from("http://example.com/proxy.pac").as_CFType(),
+            ),
+        ]);
+        let config = proxy_config_from_dict(&d);
         assert_eq!(
             config.pac_url,
             Some("http://example.com/proxy.pac".to_string())
@@ -143,41 +157,23 @@ mod tests {
 
     #[test]
     fn pac_url_ignored_when_disabled() {
-        let text = "<dictionary> {\n  \
-                     ProxyAutoConfigEnable : 0\n  \
-                     ProxyAutoConfigURLString : http://example.com/proxy.pac\n\
-                     }\n";
-        let config = parse_proxy_config(text);
+        let d = dict(&[
+            ("ProxyAutoConfigEnable", CFBoolean::from(false).as_CFType()),
+            (
+                "ProxyAutoConfigURLString",
+                CFString::from("http://example.com/proxy.pac").as_CFType(),
+            ),
+        ]);
+        let config = proxy_config_from_dict(&d);
         assert_eq!(config.pac_url, None);
     }
 
     #[test]
-    fn scoped_dictionary_does_not_clobber_top_level_values() {
-        let text = "<dictionary> {\n  \
-                     HTTPEnable : 0\n  \
-                     __SCOPED__ : <dictionary> {\n    \
-                     en0 : <dictionary> {\n      \
-                     HTTPEnable : 1\n      \
-                     HTTPProxy : scoped.example.com\n      \
-                     HTTPPort : 3128\n    \
-                     }\n  \
-                     }\n\
-                     }\n";
-        let config = parse_proxy_config(text);
-        assert!(!config.http.enabled);
-        assert_eq!(config.http.host, None);
-        assert_eq!(config.http.port, None);
-    }
-
-    #[test]
     fn exceptions_list_parsed() {
-        let text = "<dictionary> {\n  \
-                     ExceptionsList : <array> {\n    \
-                     0 : *.local\n    \
-                     1 : 169.254/16\n  \
-                     }\n\
-                     }\n";
-        let config = parse_proxy_config(text);
+        let exceptions =
+            CFArray::from_CFTypes(&[CFString::from("*.local"), CFString::from("169.254/16")]);
+        let d = dict(&[("ExceptionsList", exceptions.as_CFType())]);
+        let config = proxy_config_from_dict(&d);
         assert_eq!(
             config.exceptions,
             vec!["*.local".to_string(), "169.254/16".to_string()]
