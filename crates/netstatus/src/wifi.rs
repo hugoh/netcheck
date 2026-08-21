@@ -1,3 +1,4 @@
+use objc2_core_wlan::{CWChannelBand, CWChannelWidth, CWPHYMode, CWSecurity, CWWiFiClient};
 use serde::Serialize;
 use serde_json::Value;
 use std::process::Command;
@@ -81,14 +82,120 @@ fn parse_signal_noise(text: &str) -> Option<(i32, i32)> {
     Some((parse_dbm(signal)?, parse_dbm(noise)?))
 }
 
-/// Runs `system_profiler SPAirPortDataType -json` and parses the current
-/// Wi-Fi network's diagnostics, if any.
-pub fn wifi_status() -> WifiStatus {
+/// Fields obtainable from CoreWLAN without Location Services authorization.
+/// SSID (and, by extension, `connected`) requires that authorization, which
+/// a bare CLI/TUI binary has no way to obtain — those two still come from
+/// `system_profiler`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct CoreWlanFields {
+    pub channel: Option<String>,
+    pub signal_dbm: Option<i32>,
+    pub noise_dbm: Option<i32>,
+    pub security: Option<String>,
+    pub phy_mode: Option<String>,
+}
+
+fn format_channel(number: isize, band: CWChannelBand, width: CWChannelWidth) -> String {
+    let band = match band {
+        CWChannelBand::Band2GHz => "2.4GHz",
+        CWChannelBand::Band5GHz => "5GHz",
+        CWChannelBand::Band6GHz => "6GHz",
+        _ => "unknown band",
+    };
+    let width = match width {
+        CWChannelWidth::Width20MHz => "20MHz",
+        CWChannelWidth::Width40MHz => "40MHz",
+        CWChannelWidth::Width80MHz => "80MHz",
+        CWChannelWidth::Width160MHz => "160MHz",
+        _ => "unknown width",
+    };
+    format!("{number} ({band}, {width})")
+}
+
+fn format_security(security: CWSecurity) -> &'static str {
+    match security {
+        CWSecurity::None => "Open",
+        CWSecurity::WEP => "WEP",
+        CWSecurity::WPAPersonal => "WPA Personal",
+        CWSecurity::WPAPersonalMixed => "WPA Personal Mixed",
+        CWSecurity::WPA2Personal => "WPA2 Personal",
+        CWSecurity::WPAEnterprise => "WPA Enterprise",
+        CWSecurity::WPAEnterpriseMixed => "WPA Enterprise Mixed",
+        CWSecurity::WPA2Enterprise => "WPA2 Enterprise",
+        CWSecurity::WPA3Personal => "WPA3 Personal",
+        CWSecurity::WPA3Enterprise => "WPA3 Enterprise",
+        CWSecurity::WPA3Transition => "WPA3 Transition",
+        _ => "Unknown",
+    }
+}
+
+fn format_phy_mode(phy: CWPHYMode) -> &'static str {
+    match phy {
+        CWPHYMode::Mode11a => "802.11a",
+        CWPHYMode::Mode11b => "802.11b",
+        CWPHYMode::Mode11g => "802.11g",
+        CWPHYMode::Mode11n => "802.11n",
+        CWPHYMode::Mode11ac => "802.11ac",
+        CWPHYMode::Mode11ax => "802.11ax",
+        _ => "unknown",
+    }
+}
+
+/// Reads channel/signal/noise/security/PHY-mode straight from CoreWLAN
+/// (`CWWiFiClient`/`CWInterface`) — no shell-out, no Location Services
+/// authorization needed for these particular properties (unlike SSID).
+fn corewlan_fields() -> CoreWlanFields {
+    let Some(iface) = (unsafe { CWWiFiClient::sharedWiFiClient().interface() }) else {
+        return CoreWlanFields::default();
+    };
+
+    let channel = unsafe { iface.wlanChannel() }.map(|c| {
+        let number = unsafe { c.channelNumber() };
+        let band = unsafe { c.channelBand() };
+        let width = unsafe { c.channelWidth() };
+        format_channel(number, band, width)
+    });
+
+    let signal_dbm = i32::try_from(unsafe { iface.rssiValue() }).ok();
+    let noise_dbm = i32::try_from(unsafe { iface.noiseMeasurement() }).ok();
+    let security = Some(format_security(unsafe { iface.security() }).to_string());
+    let phy_mode = Some(format_phy_mode(unsafe { iface.activePHYMode() }).to_string());
+
+    CoreWlanFields {
+        channel,
+        signal_dbm,
+        noise_dbm,
+        security,
+        phy_mode,
+    }
+}
+
+fn system_profiler_status() -> WifiStatus {
     let output = Command::new("system_profiler")
         .args(["SPAirPortDataType", "-json"])
         .output()
         .expect("system_profiler should be runnable on macOS");
     parse_wifi_json(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// SSID and connected-state come from `system_profiler` (the only source a
+/// bare binary can reach without Location Services authorization);
+/// channel/signal/noise/security/PHY-mode come natively from CoreWLAN,
+/// overriding `system_profiler`'s (potentially stale) versions of the same
+/// fields whenever CoreWLAN successfully reports them.
+pub fn wifi_status() -> WifiStatus {
+    let mut status = system_profiler_status();
+    if !status.connected {
+        return status;
+    }
+
+    let native = corewlan_fields();
+    status.channel = native.channel.or(status.channel);
+    status.signal_dbm = native.signal_dbm.or(status.signal_dbm);
+    status.noise_dbm = native.noise_dbm.or(status.noise_dbm);
+    status.security = native.security.or(status.security);
+    status.phy_mode = native.phy_mode.or(status.phy_mode);
+    status
 }
 
 #[cfg(test)]
@@ -209,5 +316,33 @@ mod tests {
     fn only_false_positive_interface_returns_default() {
         let status = parse_wifi_json(ONLY_FALSE_POSITIVE_JSON);
         assert_eq!(status, WifiStatus::default());
+    }
+
+    #[test]
+    fn formats_channel() {
+        assert_eq!(
+            format_channel(40, CWChannelBand::Band5GHz, CWChannelWidth::Width160MHz),
+            "40 (5GHz, 160MHz)"
+        );
+        assert_eq!(
+            format_channel(6, CWChannelBand::Band2GHz, CWChannelWidth::Width20MHz),
+            "6 (2.4GHz, 20MHz)"
+        );
+    }
+
+    #[test]
+    fn formats_security() {
+        assert_eq!(format_security(CWSecurity::WPA2Personal), "WPA2 Personal");
+        assert_eq!(
+            format_security(CWSecurity::WPA3Transition),
+            "WPA3 Transition"
+        );
+        assert_eq!(format_security(CWSecurity::None), "Open");
+    }
+
+    #[test]
+    fn formats_phy_mode() {
+        assert_eq!(format_phy_mode(CWPHYMode::Mode11ax), "802.11ax");
+        assert_eq!(format_phy_mode(CWPHYMode::Mode11ac), "802.11ac");
     }
 }
