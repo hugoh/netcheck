@@ -45,3 +45,21 @@ pub(crate) fn cf_string_array(dict: &Dict, key: &str) -> Vec<String> {
         })
         .unwrap_or_default()
 }
+
+/// Reads an array-of-dictionaries value (e.g. `AdditionalRoutes`, each
+/// element `{DestinationAddress, SubnetMask}`), reinterpreting each opaque
+/// element the same way `get_dict` reinterprets the top-level value.
+pub(crate) fn cf_dict_array(dict: &Dict, key: &str) -> Vec<Dict> {
+    dict.find(CFString::from(key))
+        .and_then(|v| v.downcast::<CFArray<*const c_void>>())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|ptr| {
+                    let item = unsafe { CFType::from_void(*ptr) };
+                    let opaque: CFDictionary = item.downcast::<CFDictionary>()?;
+                    Some(unsafe { CFDictionary::wrap_under_get_rule(opaque.as_concrete_TypeRef()) })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}

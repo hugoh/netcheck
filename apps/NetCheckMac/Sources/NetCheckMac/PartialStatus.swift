@@ -1,5 +1,19 @@
 import Foundation
 
+/// Mirrors `netstatus::dns::vpn_scoped_domains` (Rust) — domains only
+/// resolvable via a VPN tunnel's own resolver.
+func vpnScopedDomains(_ resolvers: [Resolver]) -> [String] {
+    var domains: [String] = []
+    for r in resolvers {
+        guard r.scoped, let ifName = r.ifName, ifName.hasPrefix("utun") else { continue }
+        guard let domain = r.domain ?? r.searchDomains.first else { continue }
+        if !domains.contains(domain) {
+            domains.append(domain)
+        }
+    }
+    return domains
+}
+
 /// One line of `netcheck stream`'s NDJSON output — exactly one field is
 /// non-nil per envelope, matching Rust's `StatusField` enum (serde's
 /// default externally-tagged representation: `{"VariantName": <data>}`).

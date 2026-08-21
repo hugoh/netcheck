@@ -47,6 +47,24 @@ pub fn has_split_dns(resolvers: &[Resolver]) -> bool {
         .any(|r| r.scoped && r.if_name.as_deref().is_some_and(|n| n.starts_with("utun")))
 }
 
+/// Domains only resolvable via a VPN tunnel's own resolver — i.e. every
+/// scoped resolver's domain (falling back to its first search domain) for
+/// resolvers bound to a `utun*` interface. Deduplicated, order preserved.
+pub fn vpn_scoped_domains(resolvers: &[Resolver]) -> Vec<String> {
+    let mut domains = Vec::new();
+    for r in resolvers {
+        if !r.scoped || !r.if_name.as_deref().is_some_and(|n| n.starts_with("utun")) {
+            continue;
+        }
+        if let Some(domain) = r.domain.clone().or_else(|| r.search_domains.first().cloned())
+            && !domains.contains(&domain)
+        {
+            domains.push(domain);
+        }
+    }
+    domains
+}
+
 fn interface_name_for_service(store: &SCDynamicStore, dns_key: &str) -> Option<String> {
     let ipv4_key = dns_key.replace("/DNS", "/IPv4");
     if let Some(dict) = get_dict(store, &ipv4_key)
@@ -221,5 +239,56 @@ mod tests {
             reachable: true,
         }];
         assert!(!has_split_dns(&resolvers));
+    }
+
+    #[test]
+    fn vpn_scoped_domains_collects_tunnel_resolver_domains() {
+        let resolvers = vec![
+            Resolver {
+                domain: None,
+                search_domains: vec![],
+                nameservers: vec!["9.9.9.9".to_string()],
+                if_index: Some(11),
+                if_name: Some("en0".to_string()),
+                scoped: true,
+                reachable: true,
+            },
+            Resolver {
+                domain: Some("corp.example.com".to_string()),
+                search_domains: vec![],
+                nameservers: vec!["10.10.10.10".to_string()],
+                if_index: Some(20),
+                if_name: Some("utun3".to_string()),
+                scoped: true,
+                reachable: true,
+            },
+            Resolver {
+                domain: None,
+                search_domains: vec!["vpn.example.net".to_string()],
+                nameservers: vec!["192.0.2.31".to_string()],
+                if_index: Some(19),
+                if_name: Some("utun4".to_string()),
+                scoped: true,
+                reachable: true,
+            },
+        ];
+        assert_eq!(
+            vpn_scoped_domains(&resolvers),
+            vec!["corp.example.com".to_string(), "vpn.example.net".to_string()]
+        );
+    }
+
+    #[test]
+    fn vpn_scoped_domains_empty_without_tunnel_resolver() {
+        let resolvers = vec![Resolver {
+            domain: Some("lan".to_string()),
+            search_domains: vec![],
+            nameservers: vec!["9.9.9.9".to_string()],
+            if_index: Some(11),
+            if_name: Some("en0".to_string()),
+            scoped: true,
+            reachable: true,
+        }];
+        assert!(vpn_scoped_domains(&resolvers).is_empty());
     }
 }

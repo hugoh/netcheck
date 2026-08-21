@@ -10,6 +10,34 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const GOOD: egui::Color32 = egui::Color32::from_rgb(80, 200, 120);
 const BAD: egui::Color32 = egui::Color32::from_rgb(220, 80, 80);
 
+/// Formats an elapsed duration as seconds under a minute, minutes above it —
+/// "42s" reads fine, "3717s" doesn't.
+fn format_age(elapsed: Duration) -> String {
+    let secs = elapsed.as_secs();
+    if secs > 59 {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{secs}s")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_age_shows_seconds_under_a_minute() {
+        assert_eq!(format_age(Duration::from_secs(0)), "0s");
+        assert_eq!(format_age(Duration::from_secs(59)), "59s");
+    }
+
+    #[test]
+    fn format_age_shows_minutes_at_and_above_a_minute() {
+        assert_eq!(format_age(Duration::from_secs(60)), "1m");
+        assert_eq!(format_age(Duration::from_secs(125)), "2m");
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct PartialStatus {
     interfaces: Option<Vec<netstatus::Interface>>,
@@ -479,7 +507,7 @@ impl eframe::App for App {
                     self.auto_refresh.store(auto, Ordering::Relaxed);
                 }
                 if let Some(t) = self.last_updated {
-                    ui.label(format!("updated {}s ago", t.elapsed().as_secs()));
+                    ui.label(format!("updated {} ago", format_age(t.elapsed())));
                 }
             });
         });
@@ -553,6 +581,18 @@ impl eframe::App for App {
                                 ));
                                 if !vpn.tunnels.is_empty() {
                                     ui.label(format!("Tunnels: {}", vpn.tunnels.join(", ")));
+                                }
+                                if !vpn.routed_subnets.is_empty() {
+                                    ui.label(format!(
+                                        "Routed subnets: {}",
+                                        vpn.routed_subnets.join(", ")
+                                    ));
+                                }
+                                if let Some(resolvers) = status.resolvers.as_deref() {
+                                    let domains = netstatus::vpn_scoped_domains(resolvers);
+                                    if !domains.is_empty() {
+                                        ui.label(format!("VPN domains: {}", domains.join(", ")));
+                                    }
                                 }
                             });
                         });

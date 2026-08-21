@@ -16,7 +16,7 @@ mod wifi;
 pub const VERSION: &str = env!("NETCHECK_VERSION");
 
 pub use connect::{ConnectResult, connect, connect_all};
-pub use dns::{Resolver, has_split_dns, list_resolvers};
+pub use dns::{Resolver, has_split_dns, list_resolvers, vpn_scoped_domains};
 pub use interfaces::{
     AddressClass, Interface, InterfaceClass, classify_address, classify_interface, list_interfaces,
 };

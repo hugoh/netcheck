@@ -190,6 +190,7 @@ mod tests {
                 primary_interface: None,
                 connected: false,
                 split_tunnel: false,
+                routed_subnets: Vec::new(),
             }),
             StatusField::Resolvers(Vec::new()),
             StatusField::SplitDns(false),

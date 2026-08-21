@@ -175,13 +175,22 @@ struct ContentView: View {
                             if !vpn.tunnels.isEmpty {
                                 Text("Tunnels: \(vpn.tunnels.joined(separator: ", "))")
                             }
+                            if let subnets = vpn.routedSubnets, !subnets.isEmpty {
+                                Text("Routed subnets: \(subnets.joined(separator: ", "))")
+                            }
+                            if let resolvers = status.resolvers {
+                                let domains = vpnScopedDomains(resolvers)
+                                if !domains.isEmpty {
+                                    Text("VPN domains: \(domains.joined(separator: ", "))")
+                                }
+                            }
                         }
                         .padding(8)
                     } else {
                         CollectingPlaceholder()
                     }
                 }
-                .frame(height: 130)
+                .frame(height: 170)
 
                 PanelBox(title: "Proxy") {
                     if let proxy = status.proxy {

@@ -18,6 +18,17 @@ use std::time::{Duration, Instant};
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
+/// Formats an elapsed duration as seconds under a minute, minutes above it —
+/// "42s" reads fine, "3717s" doesn't.
+fn format_age(elapsed: Duration) -> String {
+    let secs = elapsed.as_secs();
+    if secs > 59 {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{secs}s")
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct PartialStatus {
     interfaces: Option<Vec<netstatus::Interface>>,
@@ -251,6 +262,7 @@ fn interface_detail_list(interfaces: Option<&[netstatus::Interface]>) -> List<'s
 fn vpn_paragraph(
     vpn: Option<&netstatus::VpnStatus>,
     split_dns: Option<bool>,
+    resolvers: Option<&[netstatus::Resolver]>,
 ) -> Paragraph<'static> {
     let Some(vpn) = vpn else {
         return Paragraph::new("Collecting...")
@@ -274,6 +286,18 @@ fn vpn_paragraph(
     ];
     if !vpn.tunnels.is_empty() {
         lines.push(Line::from(format!("Tunnels: {}", vpn.tunnels.join(", "))));
+    }
+    if !vpn.routed_subnets.is_empty() {
+        lines.push(Line::from(format!(
+            "Routed subnets: {}",
+            vpn.routed_subnets.join(", ")
+        )));
+    }
+    if let Some(resolvers) = resolvers {
+        let domains = netstatus::vpn_scoped_domains(resolvers);
+        if !domains.is_empty() {
+            lines.push(Line::from(format!("VPN domains: {}", domains.join(", "))));
+        }
     }
     Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("VPN / Tunnel"))
 }
@@ -529,7 +553,11 @@ fn draw(
                         left[1],
                     );
                     frame.render_widget(
-                        vpn_paragraph(status.vpn.as_ref(), status.split_dns),
+                        vpn_paragraph(
+                            status.vpn.as_ref(),
+                            status.split_dns,
+                            status.resolvers.as_deref(),
+                        ),
                         middle[0],
                     );
                     frame.render_widget(proxy_paragraph(status.proxy.as_ref()), middle[1]);
@@ -582,7 +610,7 @@ fn draw(
         }
 
         let age = last_updated
-            .map(|t| format!("updated {}s ago", t.elapsed().as_secs()))
+            .map(|t| format!("updated {} ago", format_age(t.elapsed())))
             .unwrap_or_default();
         let auto_state = if auto_refresh { "on, every 5s" } else { "off" };
         frame.render_widget(
@@ -644,4 +672,21 @@ fn main() -> io::Result<()> {
 
     restore_terminal(&mut terminal)?;
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_age_shows_seconds_under_a_minute() {
+        assert_eq!(format_age(Duration::from_secs(0)), "0s");
+        assert_eq!(format_age(Duration::from_secs(59)), "59s");
+    }
+
+    #[test]
+    fn format_age_shows_minutes_at_and_above_a_minute() {
+        assert_eq!(format_age(Duration::from_secs(60)), "1m");
+        assert_eq!(format_age(Duration::from_secs(125)), "2m");
+    }
 }

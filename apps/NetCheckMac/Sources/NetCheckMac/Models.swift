@@ -13,6 +13,7 @@ struct VpnStatus: Codable {
     let primaryInterface: String?
     let connected: Bool
     let splitTunnel: Bool
+    let routedSubnets: [String]?
 }
 
 struct Resolver: Codable, Identifiable {
