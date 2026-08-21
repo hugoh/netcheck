@@ -60,13 +60,23 @@ pub(crate) fn parse_wifi_json(json: &str) -> WifiStatus {
 
     WifiStatus {
         connected: true,
-        ssid: str_field("_name"),
+        ssid: ssid_field(current),
         channel: str_field("spairport_network_channel"),
         signal_dbm,
         noise_dbm,
         security: str_field("spairport_security_mode"),
         phy_mode: str_field("spairport_network_phymode"),
     }
+}
+
+/// As of macOS 26, `system_profiler`'s `_name` field for the connected
+/// network is the literal string `"<redacted>"` rather than the real SSID,
+/// or simply absent — both mean "unavailable", for a process lacking
+/// Location Services authorization. Normalized to `None` so callers see an
+/// honest "unknown" rather than a placeholder that looks like real data.
+fn ssid_field(current: &Value) -> Option<String> {
+    let name = current.get("_name").and_then(Value::as_str)?;
+    (name != "<redacted>").then(|| name.to_string())
 }
 
 /// Returns this interface's `spairport_current_network_information` block
@@ -250,6 +260,29 @@ mod tests {
       ]
     }"#;
 
+    /// Models macOS 26's Location-Services-gated system_profiler output:
+    /// connected (status + real channel/signal/etc. still present), but
+    /// `_name` is the literal string "<redacted>" instead of the real SSID.
+    const REDACTED_SSID_JSON: &str = r#"{
+      "SPAirPortDataType" : [
+        {
+          "spairport_airport_interfaces" : [
+            {
+              "_name" : "en0",
+              "spairport_current_network_information" : {
+                "_name" : "<redacted>",
+                "spairport_network_channel" : "36 (5GHz, 80MHz)",
+                "spairport_network_phymode" : "802.11ax",
+                "spairport_security_mode" : "spairport_security_mode_wpa2_personal",
+                "spairport_signal_noise" : "-52 dBm / -90 dBm"
+              },
+              "spairport_status_information" : "spairport_status_connected"
+            }
+          ]
+        }
+      ]
+    }"#;
+
     /// Models real macOS output: `awdl0` carries a
     /// `spairport_current_network_information` block with no SSID and no
     /// `spairport_status_information`, while `en0` is genuinely connected.
@@ -315,6 +348,16 @@ mod tests {
     fn disconnected_returns_default() {
         let status = parse_wifi_json(DISCONNECTED_JSON);
         assert_eq!(status, WifiStatus::default());
+    }
+
+    #[test]
+    fn redacted_ssid_normalized_to_none() {
+        let status = parse_wifi_json(REDACTED_SSID_JSON);
+        assert!(status.connected);
+        assert_eq!(status.ssid, None);
+        // The rest of the connection info is real and unaffected.
+        assert_eq!(status.channel, Some("36 (5GHz, 80MHz)".to_string()));
+        assert_eq!(status.signal_dbm, Some(-52));
     }
 
     #[test]
