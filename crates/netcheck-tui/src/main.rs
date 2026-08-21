@@ -374,7 +374,7 @@ fn connect_list(title: &'static str, results: &[netstatus::ConnectResult]) -> Li
                 .map(|ms| format!("{ms:.1} ms"))
                 .unwrap_or_else(|| "unreachable".to_string());
             ListItem::new(Line::from(vec![
-                Span::styled(format!("{:<20}", c.target), Style::default().fg(color)),
+                Span::styled(format!("{:<20} ", c.target), Style::default().fg(color)),
                 Span::raw(format!(":{}  {}", c.port, rtt)),
             ]))
         })
