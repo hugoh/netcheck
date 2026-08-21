@@ -22,27 +22,48 @@ pub(crate) fn parse_proxy_config(text: &str) -> ProxyConfig {
     let mut values: HashMap<&str, &str> = HashMap::new();
     let mut exceptions = Vec::new();
     let mut in_exceptions = false;
+    // Depth of nested `<dictionary> {` / `<array> {` blocks (other than
+    // ExceptionsList) currently being skipped, e.g. `scutil --proxy`'s
+    // per-interface `__SCOPED__` dictionary. Their key/value lines must not
+    // fall through into the flat `values` map, or a scoped override could
+    // silently clobber the top-level setting it's meant to be independent
+    // from.
+    let mut skip_depth: u32 = 0;
 
     for line in text.lines() {
         let trimmed = line.trim();
+
+        if skip_depth > 0 {
+            if trimmed.ends_with('{') {
+                skip_depth += 1;
+            } else if trimmed == "}" {
+                skip_depth -= 1;
+            }
+            continue;
+        }
+
         if in_exceptions {
             if trimmed == "}" {
                 in_exceptions = false;
-                continue;
-            }
-            if let Some((_, value)) = trimmed.split_once(" : ") {
+            } else if let Some((_, value)) = trimmed.split_once(" : ") {
                 exceptions.push(value.trim().to_string());
             }
             continue;
         }
-        if trimmed.ends_with("<array> {") {
-            if let Some((key, _)) = trimmed.split_once(" : ")
-                && key.trim() == "ExceptionsList"
-            {
+
+        if trimmed.ends_with("<array> {") || trimmed.ends_with("<dictionary> {") {
+            let key = trimmed.split_once(" : ").map(|(key, _)| key.trim());
+            if key == Some("ExceptionsList") {
                 in_exceptions = true;
+            } else if key.is_some() {
+                // A nested block under a key, e.g. `__SCOPED__ : <dictionary>
+                // {`. The top-level `<dictionary> {` has no key and is left
+                // unskipped so its contents are parsed normally.
+                skip_depth = 1;
             }
             continue;
         }
+
         if let Some((key, value)) = trimmed.split_once(" : ") {
             values.insert(key.trim(), value.trim());
         }
@@ -128,6 +149,24 @@ mod tests {
                      }\n";
         let config = parse_proxy_config(text);
         assert_eq!(config.pac_url, None);
+    }
+
+    #[test]
+    fn scoped_dictionary_does_not_clobber_top_level_values() {
+        let text = "<dictionary> {\n  \
+                     HTTPEnable : 0\n  \
+                     __SCOPED__ : <dictionary> {\n    \
+                     en0 : <dictionary> {\n      \
+                     HTTPEnable : 1\n      \
+                     HTTPProxy : scoped.example.com\n      \
+                     HTTPPort : 3128\n    \
+                     }\n  \
+                     }\n\
+                     }\n";
+        let config = parse_proxy_config(text);
+        assert!(!config.http.enabled);
+        assert_eq!(config.http.host, None);
+        assert_eq!(config.http.port, None);
     }
 
     #[test]

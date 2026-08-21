@@ -19,11 +19,26 @@ pub(crate) fn parse_ping_output(text: &str) -> Option<Duration> {
     Some(Duration::from_secs_f64(ms / 1000.0))
 }
 
+/// Returns `true` if `target` is an IPv6 literal (contains a `:`), `false`
+/// for IPv4.
+pub(crate) fn is_ipv6(target: &str) -> bool {
+    target.contains(':')
+}
+
 /// Pings `target` once with a 1 second timeout.
+///
+/// IPv6 targets are shelled to `/sbin/ping6` rather than `/sbin/ping`, which
+/// cannot resolve IPv6 literals and rejects `-6`. `ping6` has no `-t
+/// <timeout>` equivalent (its `-t` is an unrelated bare flag), so v6 probes
+/// run with `-c 1` alone and no explicit timeout bound.
 pub fn ping(target: &str) -> PingResult {
-    let output = Command::new("/sbin/ping")
-        .args(["-c", "1", "-t", "1", target])
-        .output();
+    let output = if is_ipv6(target) {
+        Command::new("/sbin/ping6").args(["-c", "1", target]).output()
+    } else {
+        Command::new("/sbin/ping")
+            .args(["-c", "1", "-t", "1", target])
+            .output()
+    };
 
     let rtt = output
         .ok()
@@ -70,5 +85,19 @@ mod tests {
                        --- 10.255.255.1 ping statistics ---\n\
                        1 packets transmitted, 0 packets received, 100.0% packet loss\n";
         assert_eq!(parse_ping_output(output), None);
+    }
+
+    #[test]
+    fn detects_ipv4_targets() {
+        assert!(!is_ipv6("1.1.1.1"));
+        assert!(!is_ipv6("8.8.4.4"));
+        assert!(!is_ipv6("208.67.222.222"));
+    }
+
+    #[test]
+    fn detects_ipv6_targets() {
+        assert!(is_ipv6("2606:4700:4700::1111"));
+        assert!(is_ipv6("2001:4860:4860::8888"));
+        assert!(is_ipv6("::1"));
     }
 }

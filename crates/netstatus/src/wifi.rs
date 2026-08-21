@@ -24,11 +24,7 @@ pub(crate) fn parse_wifi_json(json: &str) -> WifiStatus {
         .and_then(|entries| entries.first())
         .and_then(|entry| entry.get("spairport_airport_interfaces"))
         .and_then(Value::as_array)
-        .and_then(|ifaces| {
-            ifaces
-                .iter()
-                .find_map(|iface| iface.get("spairport_current_network_information"))
-        });
+        .and_then(|ifaces| ifaces.iter().find_map(connected_network_information));
 
     let Some(current) = current else {
         return WifiStatus::default();
@@ -50,6 +46,33 @@ pub(crate) fn parse_wifi_json(json: &str) -> WifiStatus {
         security: str_field("spairport_security_mode"),
         phy_mode: str_field("spairport_network_phymode"),
     }
+}
+
+/// Returns this interface's `spairport_current_network_information` block
+/// only if the interface is actually connected to a network.
+///
+/// A Wi-Fi-family interface can carry a
+/// `spairport_current_network_information` key even when it isn't really
+/// associated with anything — e.g. `awdl0` (Apple Wireless Direct Link)
+/// reports `{"spairport_network_type": "spairport_network_type_station"}`
+/// with no SSID whenever the radio is up, regardless of the real Wi-Fi
+/// interface's state. The interface-level `spairport_status_information`
+/// key (a sibling of `spairport_current_network_information`, not nested
+/// inside it) is `"spairport_status_connected"` when genuinely connected;
+/// fall back to requiring a non-empty `_name` (SSID) if that key is absent.
+fn connected_network_information(iface: &Value) -> Option<&Value> {
+    let current = iface.get("spairport_current_network_information")?;
+
+    let status_connected = iface
+        .get("spairport_status_information")
+        .and_then(Value::as_str)
+        == Some("spairport_status_connected");
+    let has_ssid = current
+        .get("_name")
+        .and_then(Value::as_str)
+        .is_some_and(|name| !name.is_empty());
+
+    (status_connected || has_ssid).then_some(current)
 }
 
 fn parse_signal_noise(text: &str) -> Option<(i32, i32)> {
@@ -84,7 +107,8 @@ mod tests {
                 "spairport_network_phymode" : "802.11ax",
                 "spairport_security_mode" : "spairport_security_mode_wpa2_personal",
                 "spairport_signal_noise" : "-52 dBm / -90 dBm"
-              }
+              },
+              "spairport_status_information" : "spairport_status_connected"
             }
           ]
         }
@@ -96,6 +120,52 @@ mod tests {
         {
           "spairport_airport_interfaces" : [
             { "_name" : "en0" }
+          ]
+        }
+      ]
+    }"#;
+
+    /// Models real macOS output: `awdl0` carries a
+    /// `spairport_current_network_information` block with no SSID and no
+    /// `spairport_status_information`, while `en0` is genuinely connected.
+    const MULTI_INTERFACE_JSON: &str = r#"{
+      "SPAirPortDataType" : [
+        {
+          "spairport_airport_interfaces" : [
+            {
+              "_name" : "awdl0",
+              "spairport_current_network_information" : {
+                "spairport_network_type" : "spairport_network_type_station"
+              }
+            },
+            {
+              "_name" : "en0",
+              "spairport_current_network_information" : {
+                "_name" : "MyWiFi",
+                "spairport_network_channel" : "36 (5GHz, 80MHz)",
+                "spairport_network_phymode" : "802.11ax",
+                "spairport_security_mode" : "spairport_security_mode_wpa2_personal",
+                "spairport_signal_noise" : "-52 dBm / -90 dBm"
+              },
+              "spairport_status_information" : "spairport_status_connected"
+            }
+          ]
+        }
+      ]
+    }"#;
+
+    /// Models the radio-off case where ONLY the false-positive `awdl0`
+    /// interface reports a `spairport_current_network_information` block.
+    const ONLY_FALSE_POSITIVE_JSON: &str = r#"{
+      "SPAirPortDataType" : [
+        {
+          "spairport_airport_interfaces" : [
+            {
+              "_name" : "awdl0",
+              "spairport_current_network_information" : {
+                "spairport_network_type" : "spairport_network_type_station"
+              }
+            }
           ]
         }
       ]
@@ -125,6 +195,19 @@ mod tests {
     #[test]
     fn malformed_json_returns_default() {
         let status = parse_wifi_json("not json");
+        assert_eq!(status, WifiStatus::default());
+    }
+
+    #[test]
+    fn skips_false_positive_interface_and_finds_real_connection() {
+        let status = parse_wifi_json(MULTI_INTERFACE_JSON);
+        assert!(status.connected);
+        assert_eq!(status.ssid, Some("MyWiFi".to_string()));
+    }
+
+    #[test]
+    fn only_false_positive_interface_returns_default() {
+        let status = parse_wifi_json(ONLY_FALSE_POSITIVE_JSON);
         assert_eq!(status, WifiStatus::default());
     }
 }

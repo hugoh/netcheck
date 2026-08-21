@@ -86,10 +86,10 @@ struct NetworkStatus: Codable {
     let resolvers: [Resolver]
     let splitDns: Bool
     let reachability: [PingResult]
-    let reachabilityV6: [PingResult]
+    let reachabilityV6: [PingResult]?
     let resolution: [ResolutionResult]
     let domainReachability: [ConnectResult]
-    let proxy: ProxyConfig
-    let wifi: WifiStatus
-    let ipStack: IpStack
+    let proxy: ProxyConfig?
+    let wifi: WifiStatus?
+    let ipStack: IpStack?
 }

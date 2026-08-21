@@ -153,3 +153,88 @@ pub fn collect_streaming(tx: mpsc::Sender<StatusField>) {
         });
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+    use std::mem::discriminant;
+
+    /// Guards the send side of `collect_streaming`: every `StatusField`
+    /// variant must be sent exactly once. The receive side (each UI's
+    /// `PartialStatus::merge()`) is protected by an exhaustive match with no
+    /// wildcard arm, but nothing stops someone from adding a 12th variant
+    /// and forgetting the corresponding `scope.spawn(...)` block — that
+    /// would compile and pass every other test while silently wedging a UI
+    /// panel on "Collecting..." forever. This shells out to real macOS
+    /// tools (ping, scutil, system_profiler); it asserts on message count
+    /// and variant coverage, not on reachability values, so it's
+    /// deterministic even without live network.
+    #[test]
+    fn collect_streaming_sends_every_status_field_variant_exactly_once() {
+        let (tx, rx) = mpsc::channel();
+        collect_streaming(tx);
+
+        let received: Vec<StatusField> = rx.into_iter().collect();
+        assert_eq!(
+            received.len(),
+            11,
+            "expected exactly 11 StatusField messages, got {}: {received:?}",
+            received.len()
+        );
+
+        let all_variants: [StatusField; 11] = [
+            StatusField::Interfaces(Vec::new()),
+            StatusField::Vpn(VpnStatus {
+                tunnels: Vec::new(),
+                primary_interface: None,
+                connected: false,
+                split_tunnel: false,
+            }),
+            StatusField::Resolvers(Vec::new()),
+            StatusField::SplitDns(false),
+            StatusField::Reachability(Vec::new()),
+            StatusField::ReachabilityV6(Vec::new()),
+            StatusField::Resolution(Vec::new()),
+            StatusField::DomainReachability(Vec::new()),
+            StatusField::Proxy(proxy::ProxyConfig {
+                http: proxy::ProxyEndpoint {
+                    enabled: false,
+                    host: None,
+                    port: None,
+                },
+                https: proxy::ProxyEndpoint {
+                    enabled: false,
+                    host: None,
+                    port: None,
+                },
+                socks: proxy::ProxyEndpoint {
+                    enabled: false,
+                    host: None,
+                    port: None,
+                },
+                pac_url: None,
+                exceptions: Vec::new(),
+            }),
+            StatusField::Wifi(WifiStatus::default()),
+            StatusField::IpStack(IpStack::None),
+        ];
+
+        let mut seen: HashSet<usize> = HashSet::new();
+        for field in &received {
+            let matched = all_variants
+                .iter()
+                .position(|variant| discriminant(variant) == discriminant(field))
+                .unwrap_or_else(|| panic!("unexpected StatusField variant: {field:?}"));
+            assert!(
+                seen.insert(matched),
+                "StatusField variant sent more than once: {field:?}"
+            );
+        }
+        assert_eq!(
+            seen.len(),
+            all_variants.len(),
+            "not every StatusField variant was sent"
+        );
+    }
+}
