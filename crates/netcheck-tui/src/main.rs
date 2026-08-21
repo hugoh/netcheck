@@ -65,6 +65,58 @@ impl PartialStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Tab {
+    Overview,
+    Dns,
+    Reachability,
+    Wifi,
+}
+
+impl Tab {
+    fn title(self) -> &'static str {
+        match self {
+            Tab::Overview => "Overview",
+            Tab::Dns => "DNS",
+            Tab::Reachability => "Reachability",
+            Tab::Wifi => "Wi-Fi",
+        }
+    }
+
+    fn from_digit(n: u8) -> Option<Tab> {
+        match n {
+            1 => Some(Tab::Overview),
+            2 => Some(Tab::Dns),
+            3 => Some(Tab::Reachability),
+            4 => Some(Tab::Wifi),
+            _ => None,
+        }
+    }
+}
+
+const TABS: [Tab; 4] = [Tab::Overview, Tab::Dns, Tab::Reachability, Tab::Wifi];
+
+fn tabs_line(active: Tab) -> Line<'static> {
+    let spans: Vec<Span> = TABS
+        .iter()
+        .flat_map(|&tab| {
+            let style = if tab == active {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::White)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            vec![
+                Span::styled(format!(" {} ", tab.title()), style),
+                Span::raw(" "),
+            ]
+        })
+        .collect();
+    Line::from(spans)
+}
+
 /// Spawns the background workers. Returns a receiver fed by both an initial
 /// one-shot collection, a periodic auto-refresh (gated by `auto_refresh`,
 /// off by default), and manual refreshes triggered via the returned sender.
@@ -277,9 +329,100 @@ fn resolution_list(resolution: Option<&[netstatus::ResolutionResult]>) -> List<'
     )
 }
 
+fn proxy_paragraph(proxy: Option<&netstatus::ProxyConfig>) -> Paragraph<'static> {
+    let Some(proxy) = proxy else {
+        return Paragraph::new("Collecting...")
+            .block(Block::default().borders(Borders::ALL).title("Proxy"));
+    };
+
+    let endpoint_line = |label: &str, endpoint: &netstatus::ProxyEndpoint| {
+        if !endpoint.enabled {
+            Line::from(format!("{label}: off"))
+        } else {
+            Line::from(format!(
+                "{label}: {}:{}",
+                endpoint.host.clone().unwrap_or_else(|| "?".to_string()),
+                endpoint
+                    .port
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "?".to_string())
+            ))
+        }
+    };
+
+    let mut lines = vec![
+        endpoint_line("HTTP", &proxy.http),
+        endpoint_line("HTTPS", &proxy.https),
+        endpoint_line("SOCKS", &proxy.socks),
+    ];
+    lines.push(Line::from(match &proxy.pac_url {
+        Some(url) => format!("PAC: {url}"),
+        None => "PAC: off".to_string(),
+    }));
+    if !proxy.exceptions.is_empty() {
+        lines.push(Line::from(format!(
+            "Exceptions: {}",
+            proxy.exceptions.join(", ")
+        )));
+    }
+
+    Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Proxy"))
+}
+
+fn ip_stack_paragraph(ip_stack: Option<netstatus::IpStack>) -> Paragraph<'static> {
+    let text = match ip_stack {
+        None => "Collecting...".to_string(),
+        Some(netstatus::IpStack::Ipv4Only) => "IPv4 only".to_string(),
+        Some(netstatus::IpStack::Ipv6Only) => "IPv6 only".to_string(),
+        Some(netstatus::IpStack::DualStack) => "Dual-stack (IPv4 + IPv6)".to_string(),
+        Some(netstatus::IpStack::None) => "No routable address".to_string(),
+    };
+    Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("IP stack"))
+}
+
+fn wifi_paragraph(wifi: Option<&netstatus::WifiStatus>) -> Paragraph<'static> {
+    let Some(wifi) = wifi else {
+        return Paragraph::new("Collecting...")
+            .block(Block::default().borders(Borders::ALL).title("Wi-Fi"));
+    };
+    if !wifi.connected {
+        return Paragraph::new("Not connected")
+            .block(Block::default().borders(Borders::ALL).title("Wi-Fi"));
+    }
+
+    let field = |label: &str, value: &Option<String>| {
+        Line::from(format!(
+            "{label}: {}",
+            value.clone().unwrap_or_else(|| "-".to_string())
+        ))
+    };
+
+    let lines = vec![
+        field("SSID", &wifi.ssid),
+        field("Channel", &wifi.channel),
+        Line::from(format!(
+            "Signal: {}",
+            wifi.signal_dbm
+                .map(|d| format!("{d} dBm"))
+                .unwrap_or_else(|| "-".to_string())
+        )),
+        Line::from(format!(
+            "Noise: {}",
+            wifi.noise_dbm
+                .map(|d| format!("{d} dBm"))
+                .unwrap_or_else(|| "-".to_string())
+        )),
+        field("Security", &wifi.security),
+        field("PHY mode", &wifi.phy_mode),
+    ];
+
+    Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Wi-Fi"))
+}
+
 fn draw(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     status: &PartialStatus,
+    active_tab: Tab,
     last_updated: Option<Instant>,
     auto_refresh: bool,
 ) -> io::Result<()> {
@@ -287,54 +430,89 @@ fn draw(
         let area = frame.area();
         let rows = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Min(0),
+                Constraint::Length(1),
+            ])
             .split(area);
 
-        if !status.has_any() {
-            frame.render_widget(Paragraph::new("Collecting network status..."), rows[0]);
-        } else {
-            let cols = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(34),
-                    Constraint::Percentage(33),
-                    Constraint::Percentage(33),
-                ])
-                .split(rows[0]);
-            let left = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
-                .split(cols[0]);
-            let middle = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-                .split(cols[1]);
-            let right = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-                .split(cols[2]);
+        frame.render_widget(Paragraph::new(tabs_line(active_tab)), rows[0]);
 
-            frame.render_widget(interfaces_list(status.interfaces.as_deref()), left[0]);
-            frame.render_widget(
-                vpn_paragraph(status.vpn.as_ref(), status.split_dns),
-                left[1],
-            );
-            frame.render_widget(dns_list(status.resolvers.as_deref()), middle[0]);
-            frame.render_widget(resolution_list(status.resolution.as_deref()), middle[1]);
-            frame.render_widget(
-                ping_list(
-                    "Reachability (IPs)",
-                    status.reachability.as_deref().unwrap_or(&[]),
-                ),
-                right[0],
-            );
-            frame.render_widget(
-                connect_list(
-                    "Reachability (domains, TCP:443)",
-                    status.domain_reachability.as_deref().unwrap_or(&[]),
-                ),
-                right[1],
-            );
+        if !status.has_any() {
+            frame.render_widget(Paragraph::new("Collecting network status..."), rows[1]);
+        } else {
+            match active_tab {
+                Tab::Overview => {
+                    let cols = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                        .split(rows[1]);
+                    let left = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+                        .split(cols[0]);
+                    let right = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Percentage(45),
+                            Constraint::Percentage(35),
+                            Constraint::Percentage(20),
+                        ])
+                        .split(cols[1]);
+
+                    frame.render_widget(interfaces_list(status.interfaces.as_deref()), left[0]);
+                    frame.render_widget(
+                        vpn_paragraph(status.vpn.as_ref(), status.split_dns),
+                        left[1],
+                    );
+                    frame.render_widget(proxy_paragraph(status.proxy.as_ref()), right[0]);
+                    frame.render_widget(wifi_paragraph(status.wifi.as_ref()), right[1]);
+                    frame.render_widget(ip_stack_paragraph(status.ip_stack), right[2]);
+                }
+                Tab::Dns => {
+                    let cols = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                        .split(rows[1]);
+                    frame.render_widget(dns_list(status.resolvers.as_deref()), cols[0]);
+                    frame.render_widget(resolution_list(status.resolution.as_deref()), cols[1]);
+                }
+                Tab::Reachability => {
+                    let cols = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([
+                            Constraint::Percentage(34),
+                            Constraint::Percentage(33),
+                            Constraint::Percentage(33),
+                        ])
+                        .split(rows[1]);
+                    frame.render_widget(
+                        ping_list(
+                            "Reachability (IPv4)",
+                            status.reachability.as_deref().unwrap_or(&[]),
+                        ),
+                        cols[0],
+                    );
+                    frame.render_widget(
+                        ping_list(
+                            "Reachability (IPv6)",
+                            status.reachability_v6.as_deref().unwrap_or(&[]),
+                        ),
+                        cols[1],
+                    );
+                    frame.render_widget(
+                        connect_list(
+                            "Reachability (domains, TCP:443)",
+                            status.domain_reachability.as_deref().unwrap_or(&[]),
+                        ),
+                        cols[2],
+                    );
+                }
+                Tab::Wifi => {
+                    frame.render_widget(wifi_paragraph(status.wifi.as_ref()), rows[1]);
+                }
+            }
         }
 
         let age = last_updated
@@ -343,9 +521,9 @@ fn draw(
         let auto_state = if auto_refresh { "on, every 5s" } else { "off" };
         frame.render_widget(
             Paragraph::new(format!(
-                "q: quit   r: refresh now   a: auto-refresh ({auto_state})   {age}"
+                "q: quit   r: refresh now   a: auto-refresh ({auto_state})   1-4: tabs   {age}"
             )),
-            rows[1],
+            rows[2],
         );
     })?;
     Ok(())
@@ -357,6 +535,7 @@ fn main() -> io::Result<()> {
     let (rx, manual_tx) = spawn_workers(auto_refresh.clone());
     let mut status = PartialStatus::default();
     let mut last_updated: Option<Instant> = None;
+    let mut active_tab = Tab::Overview;
 
     let result = (|| -> io::Result<()> {
         loop {
@@ -368,6 +547,7 @@ fn main() -> io::Result<()> {
             draw(
                 &mut terminal,
                 &status,
+                active_tab,
                 last_updated,
                 auto_refresh.load(Ordering::Relaxed),
             )?;
@@ -383,6 +563,11 @@ fn main() -> io::Result<()> {
                     }
                     KeyCode::Char('a') => {
                         auto_refresh.fetch_xor(true, Ordering::Relaxed);
+                    }
+                    KeyCode::Char(c @ '1'..='4') => {
+                        if let Some(tab) = Tab::from_digit(c as u8 - b'0') {
+                            active_tab = tab;
+                        }
                     }
                     _ => {}
                 }
