@@ -1,6 +1,6 @@
 use eframe::egui;
 use egui_extras::{Column, Size, StripBuilder, TableBuilder};
-use netstatus::NetworkStatus;
+use netstatus::StatusField;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -10,19 +10,64 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const GOOD: egui::Color32 = egui::Color32::from_rgb(80, 200, 120);
 const BAD: egui::Color32 = egui::Color32::from_rgb(220, 80, 80);
 
+#[derive(Debug, Clone, Default)]
+struct PartialStatus {
+    interfaces: Option<Vec<netstatus::Interface>>,
+    vpn: Option<netstatus::VpnStatus>,
+    split_dns: Option<bool>,
+    resolvers: Option<Vec<netstatus::Resolver>>,
+    reachability: Option<Vec<netstatus::PingResult>>,
+    reachability_v6: Option<Vec<netstatus::PingResult>>,
+    resolution: Option<Vec<netstatus::ResolutionResult>>,
+    domain_reachability: Option<Vec<netstatus::ConnectResult>>,
+    proxy: Option<netstatus::ProxyConfig>,
+    wifi: Option<netstatus::WifiStatus>,
+    ip_stack: Option<netstatus::IpStack>,
+}
+
+impl PartialStatus {
+    fn merge(&mut self, field: StatusField) {
+        match field {
+            StatusField::Interfaces(v) => self.interfaces = Some(v),
+            StatusField::Vpn(v) => self.vpn = Some(v),
+            StatusField::Resolvers(v) => self.resolvers = Some(v),
+            StatusField::SplitDns(v) => self.split_dns = Some(v),
+            StatusField::Reachability(v) => self.reachability = Some(v),
+            StatusField::ReachabilityV6(v) => self.reachability_v6 = Some(v),
+            StatusField::Resolution(v) => self.resolution = Some(v),
+            StatusField::DomainReachability(v) => self.domain_reachability = Some(v),
+            StatusField::Proxy(v) => self.proxy = Some(v),
+            StatusField::Wifi(v) => self.wifi = Some(v),
+            StatusField::IpStack(v) => self.ip_stack = Some(v),
+        }
+    }
+
+    fn has_any(&self) -> bool {
+        self.interfaces.is_some()
+            || self.vpn.is_some()
+            || self.resolvers.is_some()
+            || self.split_dns.is_some()
+            || self.reachability.is_some()
+            || self.reachability_v6.is_some()
+            || self.resolution.is_some()
+            || self.domain_reachability.is_some()
+            || self.proxy.is_some()
+            || self.wifi.is_some()
+            || self.ip_stack.is_some()
+    }
+}
+
 /// Spawns the auto-refresh worker. Collects once immediately, then only
 /// keeps collecting on a timer while `auto_refresh` is true (off by default).
-fn spawn_auto_collector(auto_refresh: Arc<AtomicBool>) -> mpsc::Receiver<NetworkStatus> {
+fn spawn_auto_collector(auto_refresh: Arc<AtomicBool>) -> mpsc::Receiver<StatusField> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        if tx.send(netstatus::collect()).is_err() {
-            return;
-        }
+        netstatus::collect_streaming(tx.clone());
         loop {
             if auto_refresh.load(Ordering::Relaxed) {
                 std::thread::sleep(REFRESH_INTERVAL);
-                if auto_refresh.load(Ordering::Relaxed) && tx.send(netstatus::collect()).is_err() {
-                    return;
+                if auto_refresh.load(Ordering::Relaxed) {
+                    netstatus::collect_streaming(tx.clone());
                 }
             } else {
                 std::thread::sleep(Duration::from_millis(200));
@@ -33,11 +78,11 @@ fn spawn_auto_collector(auto_refresh: Arc<AtomicBool>) -> mpsc::Receiver<Network
 }
 
 struct App {
-    rx: mpsc::Receiver<NetworkStatus>,
-    status: Option<NetworkStatus>,
+    rx: mpsc::Receiver<StatusField>,
+    status: PartialStatus,
     last_updated: Option<Instant>,
     manual_refresh: mpsc::Sender<()>,
-    manual_rx: mpsc::Receiver<NetworkStatus>,
+    manual_rx: mpsc::Receiver<StatusField>,
     auto_refresh: Arc<AtomicBool>,
 }
 
@@ -50,15 +95,13 @@ impl App {
         let (manual_result_tx, manual_rx) = mpsc::channel();
         std::thread::spawn(move || {
             for () in manual_trigger_rx {
-                if manual_result_tx.send(netstatus::collect()).is_err() {
-                    return;
-                }
+                netstatus::collect_streaming(manual_result_tx.clone());
             }
         });
 
         Self {
             rx,
-            status: None,
+            status: PartialStatus::default(),
             last_updated: None,
             manual_refresh: manual_tx,
             manual_rx,
@@ -67,12 +110,12 @@ impl App {
     }
 
     fn poll(&mut self) {
-        while let Ok(status) = self.rx.try_recv() {
-            self.status = Some(status);
+        while let Ok(field) = self.rx.try_recv() {
+            self.status.merge(field);
             self.last_updated = Some(Instant::now());
         }
-        while let Ok(status) = self.manual_rx.try_recv() {
-            self.status = Some(status);
+        while let Ok(field) = self.manual_rx.try_recv() {
+            self.status.merge(field);
             self.last_updated = Some(Instant::now());
         }
     }
@@ -98,13 +141,17 @@ fn panel(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&mut egui::Ui
         });
 }
 
-fn interfaces_table(ui: &mut egui::Ui, status: &NetworkStatus) {
+fn interfaces_table(ui: &mut egui::Ui, interfaces: Option<&[netstatus::Interface]>) {
+    let Some(interfaces) = interfaces else {
+        ui.label("Collecting...");
+        return;
+    };
     TableBuilder::new(ui)
         .striped(true)
         .column(Column::auto().at_least(50.0))
         .column(Column::remainder())
         .body(|body| {
-            let rows: Vec<_> = status.interfaces.iter().filter(|i| !i.loopback).collect();
+            let rows: Vec<_> = interfaces.iter().filter(|i| !i.loopback).collect();
             body.rows(18.0, rows.len(), |mut row| {
                 let iface = rows[row.index()];
                 row.col(|ui| {
@@ -121,18 +168,18 @@ fn interfaces_table(ui: &mut egui::Ui, status: &NetworkStatus) {
         });
 }
 
-fn dns_resolvers_table(ui: &mut egui::Ui, status: &NetworkStatus) {
+fn dns_resolvers_table(ui: &mut egui::Ui, resolvers: Option<&[netstatus::Resolver]>) {
+    let Some(resolvers) = resolvers else {
+        ui.label("Collecting...");
+        return;
+    };
     TableBuilder::new(ui)
         .striped(true)
         .column(Column::auto().at_least(90.0))
         .column(Column::auto().at_least(50.0))
         .column(Column::remainder())
         .body(|body| {
-            let rows: Vec<_> = status
-                .resolvers
-                .iter()
-                .filter(|r| !r.nameservers.is_empty())
-                .collect();
+            let rows: Vec<_> = resolvers.iter().filter(|r| !r.nameservers.is_empty()).collect();
             body.rows(18.0, rows.len(), |mut row| {
                 let r = rows[row.index()];
                 let label = r
@@ -153,15 +200,19 @@ fn dns_resolvers_table(ui: &mut egui::Ui, status: &NetworkStatus) {
         });
 }
 
-fn resolution_table(ui: &mut egui::Ui, status: &NetworkStatus) {
+fn resolution_table(ui: &mut egui::Ui, resolution: Option<&[netstatus::ResolutionResult]>) {
+    let Some(resolution) = resolution else {
+        ui.label("Collecting...");
+        return;
+    };
     TableBuilder::new(ui)
         .striped(true)
         .column(Column::auto().at_least(110.0))
         .column(Column::auto().at_least(60.0))
         .column(Column::remainder())
         .body(|body| {
-            body.rows(18.0, status.resolution.len(), |mut row| {
-                let r = &status.resolution[row.index()];
+            body.rows(18.0, resolution.len(), |mut row| {
+                let r = &resolution[row.index()];
                 row.col(|ui| {
                     ui.colored_label(if r.resolved { GOOD } else { BAD }, &r.domain);
                 });
@@ -251,13 +302,14 @@ impl eframe::App for App {
             });
         });
 
-        let Some(status) = self.status.clone() else {
+        if !self.status.has_any() {
             egui::CentralPanel::default().show(ui, |ui| {
                 ui.label("Collecting network status...");
             });
             return;
-        };
+        }
 
+        let status = self.status.clone();
         egui::CentralPanel::default().show(ui, |ui| {
             StripBuilder::new(ui)
                 .size(Size::relative(0.32))
@@ -265,7 +317,9 @@ impl eframe::App for App {
                 .size(Size::remainder())
                 .horizontal(|mut strip| {
                     strip.cell(|ui| {
-                        panel(ui, "Interfaces", |ui| interfaces_table(ui, &status));
+                        panel(ui, "Interfaces", |ui| {
+                            interfaces_table(ui, status.interfaces.as_deref())
+                        });
                     });
 
                     strip.cell(|ui| {
@@ -276,7 +330,10 @@ impl eframe::App for App {
                             .vertical(|mut strip| {
                                 strip.cell(|ui| {
                                     panel(ui, "VPN / Tunnel", |ui| {
-                                        let vpn = &status.vpn;
+                                        let Some(vpn) = status.vpn.as_ref() else {
+                                            ui.label("Collecting...");
+                                            return;
+                                        };
                                         ui.label(format!(
                                             "Primary interface: {}",
                                             vpn.primary_interface
@@ -288,7 +345,13 @@ impl eframe::App for App {
                                             format!("VPN connected: {}", vpn.connected),
                                         );
                                         ui.label(format!("Split tunnel: {}", vpn.split_tunnel));
-                                        ui.label(format!("Split DNS: {}", status.split_dns));
+                                        ui.label(format!(
+                                            "Split DNS: {}",
+                                            status
+                                                .split_dns
+                                                .map(|b| b.to_string())
+                                                .unwrap_or_else(|| "collecting...".into())
+                                        ));
                                         if !vpn.tunnels.is_empty() {
                                             ui.label(format!(
                                                 "Tunnels: {}",
@@ -299,11 +362,13 @@ impl eframe::App for App {
                                 });
                                 strip.cell(|ui| {
                                     panel(ui, "DNS resolvers", |ui| {
-                                        dns_resolvers_table(ui, &status)
+                                        dns_resolvers_table(ui, status.resolvers.as_deref())
                                     });
                                 });
                                 strip.cell(|ui| {
-                                    panel(ui, "DNS resolution", |ui| resolution_table(ui, &status));
+                                    panel(ui, "DNS resolution", |ui| {
+                                        resolution_table(ui, status.resolution.as_deref())
+                                    });
                                 });
                             });
                     });
@@ -315,12 +380,18 @@ impl eframe::App for App {
                             .vertical(|mut strip| {
                                 strip.cell(|ui| {
                                     panel(ui, "Reachability (IPs)", |ui| {
-                                        ping_table(ui, &status.reachability)
+                                        ping_table(
+                                            ui,
+                                            status.reachability.as_deref().unwrap_or(&[]),
+                                        )
                                     });
                                 });
                                 strip.cell(|ui| {
                                     panel(ui, "Reachability (domains, TCP:443)", |ui| {
-                                        connect_table(ui, &status.domain_reachability)
+                                        connect_table(
+                                            ui,
+                                            status.domain_reachability.as_deref().unwrap_or(&[]),
+                                        )
                                     });
                                 });
                             });
