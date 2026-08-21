@@ -38,56 +38,6 @@ mod tests {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-struct PartialStatus {
-    interfaces: Option<Vec<netstatus::Interface>>,
-    vpn: Option<netstatus::VpnStatus>,
-    split_dns: Option<bool>,
-    resolvers: Option<Vec<netstatus::Resolver>>,
-    reachability: Option<Vec<netstatus::PingResult>>,
-    reachability_v6: Option<Vec<netstatus::PingResult>>,
-    resolution: Option<Vec<netstatus::ResolutionResult>>,
-    domain_reachability: Option<Vec<netstatus::ConnectResult>>,
-    proxy: Option<netstatus::ProxyConfig>,
-    wifi_identity: Option<netstatus::WifiIdentity>,
-    wifi_radio: Option<netstatus::WifiRadio>,
-    ip_stack: Option<netstatus::IpStack>,
-}
-
-impl PartialStatus {
-    fn merge(&mut self, field: StatusField) {
-        match field {
-            StatusField::Interfaces(v) => self.interfaces = Some(v),
-            StatusField::Vpn(v) => self.vpn = Some(v),
-            StatusField::Resolvers(v) => self.resolvers = Some(v),
-            StatusField::SplitDns(v) => self.split_dns = Some(v),
-            StatusField::Reachability(v) => self.reachability = Some(v),
-            StatusField::ReachabilityV6(v) => self.reachability_v6 = Some(v),
-            StatusField::Resolution(v) => self.resolution = Some(v),
-            StatusField::DomainReachability(v) => self.domain_reachability = Some(v),
-            StatusField::Proxy(v) => self.proxy = Some(v),
-            StatusField::WifiIdentity(v) => self.wifi_identity = Some(v),
-            StatusField::WifiRadio(v) => self.wifi_radio = Some(v),
-            StatusField::IpStack(v) => self.ip_stack = Some(v),
-        }
-    }
-
-    fn has_any(&self) -> bool {
-        self.interfaces.is_some()
-            || self.vpn.is_some()
-            || self.resolvers.is_some()
-            || self.split_dns.is_some()
-            || self.reachability.is_some()
-            || self.reachability_v6.is_some()
-            || self.resolution.is_some()
-            || self.domain_reachability.is_some()
-            || self.proxy.is_some()
-            || self.wifi_identity.is_some()
-            || self.wifi_radio.is_some()
-            || self.ip_stack.is_some()
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Tab {
     Overview,
@@ -137,7 +87,7 @@ fn spawn_auto_collector(auto_refresh: Arc<AtomicBool>) -> mpsc::Receiver<StatusF
 
 struct App {
     rx: mpsc::Receiver<StatusField>,
-    status: PartialStatus,
+    status: netstatus::PartialStatus,
     last_updated: Option<Instant>,
     manual_refresh: mpsc::Sender<()>,
     manual_rx: mpsc::Receiver<StatusField>,
@@ -160,7 +110,7 @@ impl App {
 
         Self {
             rx,
-            status: PartialStatus::default(),
+            status: netstatus::PartialStatus::default(),
             last_updated: None,
             manual_refresh: manual_tx,
             manual_rx,

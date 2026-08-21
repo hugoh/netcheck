@@ -68,6 +68,23 @@ fn cidr(addr: &str, mask: &str) -> String {
     }
 }
 
+/// Pairs `Addresses` with `SubnetMasks` by position. The dynamic store
+/// normally keeps these arrays the same length, but if it ever reports a
+/// mismatch (a mid-reconfiguration read, or a malformed VPN-pushed state),
+/// every address is still reported — as a bare address if no mask lines up
+/// with it — rather than silently dropping the trailing entries with
+/// `Iterator::zip`.
+fn own_subnet_routes(addresses: &[String], subnet_masks: &[String]) -> Vec<String> {
+    addresses
+        .iter()
+        .enumerate()
+        .map(|(i, addr)| match subnet_masks.get(i) {
+            Some(mask) => cidr(addr, mask),
+            None => addr.to_string(),
+        })
+        .collect()
+}
+
 /// Reads the routed subnets for `if_name`'s network service: its own
 /// assigned address/subnet (`Addresses`/`SubnetMasks`) plus any discrete
 /// split-tunnel destinations it pushes (`AdditionalRoutes`, each
@@ -88,11 +105,7 @@ fn routes_for_interface(store: &SCDynamicStore, if_name: &str) -> Vec<String> {
 
         let addresses = cf_string_array(&dict, "Addresses");
         let subnet_masks = cf_string_array(&dict, "SubnetMasks");
-        let mut routes: Vec<String> = addresses
-            .iter()
-            .zip(subnet_masks.iter())
-            .map(|(addr, mask)| cidr(addr, mask))
-            .collect();
+        let mut routes = own_subnet_routes(&addresses, &subnet_masks);
 
         for route in cf_dict_array(&dict, "AdditionalRoutes") {
             if let Some(dest) = cf_string(&route, "DestinationAddress") {
@@ -215,5 +228,25 @@ mod tests {
     fn cidr_formats_address_and_mask() {
         assert_eq!(cidr("10.223.36.41", "255.0.0.0"), "10.223.36.41/8");
         assert_eq!(cidr("192.168.68.67", "255.255.255.255"), "192.168.68.67/32");
+    }
+
+    #[test]
+    fn own_subnet_routes_pairs_addresses_with_masks() {
+        let addresses = vec!["10.0.0.1".to_string(), "10.0.0.2".to_string()];
+        let masks = vec!["255.0.0.0".to_string(), "255.255.255.0".to_string()];
+        assert_eq!(
+            own_subnet_routes(&addresses, &masks),
+            vec!["10.0.0.1/8".to_string(), "10.0.0.2/24".to_string()]
+        );
+    }
+
+    #[test]
+    fn own_subnet_routes_keeps_trailing_address_when_masks_run_short() {
+        let addresses = vec!["10.0.0.1".to_string(), "10.0.0.2".to_string()];
+        let masks = vec!["255.0.0.0".to_string()];
+        assert_eq!(
+            own_subnet_routes(&addresses, &masks),
+            vec!["10.0.0.1/8".to_string(), "10.0.0.2".to_string()]
+        );
     }
 }

@@ -29,6 +29,21 @@ local linters = new Mapping<String, Step> {
         check = "cargo test --workspace"
         profiles = List("!ci")
     }
+    // Deny-listed licenses/duplicate-version/unknown-source lints, config
+    // in deny.toml. Excluded from `ci` for the same reason as
+    // cargo_fmt/cargo_clippy/cargo_test: CI's ubuntu lint job doesn't have
+    // the Rust toolchain (or these cargo subcommands) installed.
+    ["cargo_deny"] = {
+        glob = List("**/Cargo.toml", "**/Cargo.lock", "deny.toml")
+        check = "cargo deny check"
+        profiles = List("!ci")
+    }
+    // RustSec advisory-database scan against Cargo.lock.
+    ["cargo_audit"] = {
+        glob = List("**/Cargo.lock")
+        check = "cargo audit"
+        profiles = List("!ci")
+    }
     // Plain `cog check` (whole history), not `--from-latest-tag`: this repo
     // has no release tag yet, and `--from-latest-tag` hard-errors with
     // "unable to get any tag" until one exists. Cheap to check full history

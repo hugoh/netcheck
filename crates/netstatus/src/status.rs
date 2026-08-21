@@ -163,6 +163,60 @@ pub fn collect_streaming(tx: mpsc::Sender<StatusField>) {
     });
 }
 
+/// Accumulates `StatusField`s as they stream in from `collect_streaming`,
+/// one `Option` field per `StatusField` variant. Shared by every UI
+/// (`netcheck-tui`, `netcheck-gui`) so a new `StatusField` variant only
+/// needs its `merge`/`has_any` arm added once instead of once per UI.
+#[derive(Debug, Clone, Default)]
+pub struct PartialStatus {
+    pub interfaces: Option<Vec<Interface>>,
+    pub vpn: Option<VpnStatus>,
+    pub split_dns: Option<bool>,
+    pub resolvers: Option<Vec<Resolver>>,
+    pub reachability: Option<Vec<PingResult>>,
+    pub reachability_v6: Option<Vec<PingResult>>,
+    pub resolution: Option<Vec<ResolutionResult>>,
+    pub domain_reachability: Option<Vec<ConnectResult>>,
+    pub proxy: Option<ProxyConfig>,
+    pub wifi_identity: Option<WifiIdentity>,
+    pub wifi_radio: Option<WifiRadio>,
+    pub ip_stack: Option<IpStack>,
+}
+
+impl PartialStatus {
+    pub fn merge(&mut self, field: StatusField) {
+        match field {
+            StatusField::Interfaces(v) => self.interfaces = Some(v),
+            StatusField::Vpn(v) => self.vpn = Some(v),
+            StatusField::Resolvers(v) => self.resolvers = Some(v),
+            StatusField::SplitDns(v) => self.split_dns = Some(v),
+            StatusField::Reachability(v) => self.reachability = Some(v),
+            StatusField::ReachabilityV6(v) => self.reachability_v6 = Some(v),
+            StatusField::Resolution(v) => self.resolution = Some(v),
+            StatusField::DomainReachability(v) => self.domain_reachability = Some(v),
+            StatusField::Proxy(v) => self.proxy = Some(v),
+            StatusField::WifiIdentity(v) => self.wifi_identity = Some(v),
+            StatusField::WifiRadio(v) => self.wifi_radio = Some(v),
+            StatusField::IpStack(v) => self.ip_stack = Some(v),
+        }
+    }
+
+    pub fn has_any(&self) -> bool {
+        self.interfaces.is_some()
+            || self.vpn.is_some()
+            || self.resolvers.is_some()
+            || self.split_dns.is_some()
+            || self.reachability.is_some()
+            || self.reachability_v6.is_some()
+            || self.resolution.is_some()
+            || self.domain_reachability.is_some()
+            || self.proxy.is_some()
+            || self.wifi_identity.is_some()
+            || self.wifi_radio.is_some()
+            || self.ip_stack.is_some()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -15,6 +15,8 @@ shellcheck = "0.11.0"
 "aqua:anordal/shellharden" = "4.3.2"
 shfmt = "3.13.1"
 cocogitto = "7.0.0"
+"cargo:cargo-deny" = "0.20.2"
+"cargo:cargo-audit" = "0.22.2"
 
 [tasks."build:cli"]
 description = "Build a dev netcheck-cli binary"

@@ -167,7 +167,10 @@ pub fn wifi_radio() -> WifiRadio {
         return WifiRadio::default();
     };
 
-    let channel = unsafe { iface.wlanChannel() }.map(|c| {
+    let wlan_channel = unsafe { iface.wlanChannel() };
+    let associated = wlan_channel.is_some();
+
+    let channel = wlan_channel.map(|c| {
         let number = unsafe { c.channelNumber() };
         let band = unsafe { c.channelBand() };
         let width = unsafe { c.channelWidth() };
@@ -176,8 +179,13 @@ pub fn wifi_radio() -> WifiRadio {
 
     let signal_dbm = i32::try_from(unsafe { iface.rssiValue() }).ok();
     let noise_dbm = i32::try_from(unsafe { iface.noiseMeasurement() }).ok();
-    let security = Some(format_security(unsafe { iface.security() }).to_string());
-    let phy_mode = Some(format_phy_mode(unsafe { iface.activePHYMode() }).to_string());
+    // security()/activePHYMode() report a value from CWInterface even when
+    // not associated with any network (unlike wlanChannel(), which
+    // correctly returns None); gate on association so a disconnected radio
+    // doesn't show a phantom "Security: Open".
+    let security = associated.then(|| format_security(unsafe { iface.security() }).to_string());
+    let phy_mode =
+        associated.then(|| format_phy_mode(unsafe { iface.activePHYMode() }).to_string());
 
     WifiRadio {
         channel,
@@ -191,12 +199,24 @@ pub fn wifi_radio() -> WifiRadio {
 /// Reads SSID/connected-state via `system_profiler SPAirPortDataType
 /// -json` — the only source a bare binary can reach without Location
 /// Services authorization. Slow: a subprocess call, commonly ~1s.
+///
+/// If the subprocess can't even be spawned (sandboxed environment,
+/// resource exhaustion), reports disconnected rather than panicking —
+/// callers run this inside `thread::scope` and join with `.unwrap()`, so a
+/// panic here would crash the whole `collect()`/`collect_streaming()` call
+/// instead of just leaving Wi-Fi identity unknown.
 pub fn wifi_identity() -> WifiIdentity {
-    let output = Command::new("system_profiler")
+    let Ok(output) = Command::new("system_profiler")
         .args(["SPAirPortDataType", "-json"])
         .output()
-        .expect("system_profiler should be runnable on macOS");
-    let status = parse_wifi_json(&String::from_utf8_lossy(&output.stdout));
+    else {
+        return WifiIdentity::default();
+    };
+    identity_from_output(&output.stdout)
+}
+
+fn identity_from_output(stdout: &[u8]) -> WifiIdentity {
+    let status = parse_wifi_json(&String::from_utf8_lossy(stdout));
     WifiIdentity {
         connected: status.connected,
         ssid: status.ssid,
@@ -399,6 +419,12 @@ mod tests {
             "WPA3 Transition"
         );
         assert_eq!(format_security(CWSecurity::None), "Open");
+    }
+
+    #[test]
+    fn identity_from_empty_output_returns_disconnected_default() {
+        let identity = identity_from_output(b"");
+        assert_eq!(identity, WifiIdentity::default());
     }
 
     #[test]

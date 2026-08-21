@@ -50,7 +50,9 @@ final class StatusFetcher: ObservableObject {
             do {
                 for try await line in Self.streamLines(url: binaryURL, args: ["stream"]) {
                     guard !line.isEmpty, let data = line.data(using: .utf8) else { continue }
-                    let envelope = try decoder.decode(StatusFieldEnvelope.self, from: data)
+                    guard let envelope = try? decoder.decode(StatusFieldEnvelope.self, from: data) else {
+                        continue
+                    }
                     status.merge(envelope)
                     lastUpdated = Date()
                     errorMessage = nil

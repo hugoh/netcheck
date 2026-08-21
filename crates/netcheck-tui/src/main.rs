@@ -18,6 +18,14 @@ use std::time::{Duration, Instant};
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
+/// Pads `text` to `width` columns with a single trailing separator space.
+/// The one place list-row column widths are defined, so a new/reordered
+/// list can't glue its target and status text together the way two past
+/// bugs did by hand-writing `format!("{:<N} ", ...)` at each call site.
+fn pad_col(text: &str, width: usize) -> String {
+    format!("{text:<width$} ")
+}
+
 /// Formats an elapsed duration as seconds under a minute, minutes above it —
 /// "42s" reads fine, "3717s" doesn't.
 fn format_age(elapsed: Duration) -> String {
@@ -26,56 +34,6 @@ fn format_age(elapsed: Duration) -> String {
         format!("{}m", secs / 60)
     } else {
         format!("{secs}s")
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-struct PartialStatus {
-    interfaces: Option<Vec<netstatus::Interface>>,
-    vpn: Option<netstatus::VpnStatus>,
-    split_dns: Option<bool>,
-    resolvers: Option<Vec<netstatus::Resolver>>,
-    reachability: Option<Vec<netstatus::PingResult>>,
-    reachability_v6: Option<Vec<netstatus::PingResult>>,
-    resolution: Option<Vec<netstatus::ResolutionResult>>,
-    domain_reachability: Option<Vec<netstatus::ConnectResult>>,
-    proxy: Option<netstatus::ProxyConfig>,
-    wifi_identity: Option<netstatus::WifiIdentity>,
-    wifi_radio: Option<netstatus::WifiRadio>,
-    ip_stack: Option<netstatus::IpStack>,
-}
-
-impl PartialStatus {
-    fn merge(&mut self, field: StatusField) {
-        match field {
-            StatusField::Interfaces(v) => self.interfaces = Some(v),
-            StatusField::Vpn(v) => self.vpn = Some(v),
-            StatusField::Resolvers(v) => self.resolvers = Some(v),
-            StatusField::SplitDns(v) => self.split_dns = Some(v),
-            StatusField::Reachability(v) => self.reachability = Some(v),
-            StatusField::ReachabilityV6(v) => self.reachability_v6 = Some(v),
-            StatusField::Resolution(v) => self.resolution = Some(v),
-            StatusField::DomainReachability(v) => self.domain_reachability = Some(v),
-            StatusField::Proxy(v) => self.proxy = Some(v),
-            StatusField::WifiIdentity(v) => self.wifi_identity = Some(v),
-            StatusField::WifiRadio(v) => self.wifi_radio = Some(v),
-            StatusField::IpStack(v) => self.ip_stack = Some(v),
-        }
-    }
-
-    fn has_any(&self) -> bool {
-        self.interfaces.is_some()
-            || self.vpn.is_some()
-            || self.resolvers.is_some()
-            || self.split_dns.is_some()
-            || self.reachability.is_some()
-            || self.reachability_v6.is_some()
-            || self.resolution.is_some()
-            || self.domain_reachability.is_some()
-            || self.proxy.is_some()
-            || self.wifi_identity.is_some()
-            || self.wifi_radio.is_some()
-            || self.ip_stack.is_some()
     }
 }
 
@@ -207,7 +165,7 @@ fn interfaces_list(interfaces: Option<&[netstatus::Interface]>) -> List<'static>
                 };
                 ListItem::new(Line::from(vec![
                     Span::styled(
-                        format!("{:<8} ", i.name),
+                        pad_col(&i.name, 8),
                         Style::default().add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(label, Style::default().fg(color)),
@@ -324,8 +282,8 @@ fn dns_list(resolvers: Option<&[netstatus::Resolver]>) -> List<'static> {
                     Color::Red
                 };
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("{label:<20} "), Style::default().fg(color)),
-                    Span::raw(format!("{:<10} ", scope)),
+                    Span::styled(pad_col(&label, 20), Style::default().fg(color)),
+                    Span::raw(pad_col(&scope, 10)),
                     Span::raw(r.nameservers.join(", ")),
                 ]))
             })
@@ -352,7 +310,7 @@ fn ping_list(title: &'static str, results: &[netstatus::PingResult]) -> List<'st
                 .map(|ms| format!("{ms:.1} ms"))
                 .unwrap_or_else(|| "timeout".to_string());
             ListItem::new(Line::from(vec![
-                Span::styled(format!("{:<20} ", p.target), Style::default().fg(color)),
+                Span::styled(pad_col(&p.target, 20), Style::default().fg(color)),
                 Span::raw(rtt),
             ]))
         })
@@ -374,7 +332,7 @@ fn connect_list(title: &'static str, results: &[netstatus::ConnectResult]) -> Li
                 .map(|ms| format!("{ms:.1} ms"))
                 .unwrap_or_else(|| "unreachable".to_string());
             ListItem::new(Line::from(vec![
-                Span::styled(format!("{:<20} ", c.target), Style::default().fg(color)),
+                Span::styled(pad_col(&c.target, 20), Style::default().fg(color)),
                 Span::raw(format!(":{}  {}", c.port, rtt)),
             ]))
         })
@@ -401,7 +359,7 @@ fn resolution_list(resolution: Option<&[netstatus::ResolutionResult]>) -> List<'
                     "failed".to_string()
                 };
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("{:<20} ", r.domain), Style::default().fg(color)),
+                    Span::styled(pad_col(&r.domain, 20), Style::default().fg(color)),
                     Span::raw(detail),
                 ]))
             })
@@ -521,7 +479,7 @@ fn wifi_paragraph(
 
 fn draw(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-    status: &PartialStatus,
+    status: &netstatus::PartialStatus,
     active_tab: Tab,
     last_updated: Option<Instant>,
     auto_refresh: bool,
@@ -646,7 +604,7 @@ fn main() -> io::Result<()> {
     let mut terminal = setup_terminal()?;
     let auto_refresh = Arc::new(AtomicBool::new(false));
     let (rx, manual_tx) = spawn_workers(auto_refresh.clone());
-    let mut status = PartialStatus::default();
+    let mut status = netstatus::PartialStatus::default();
     let mut last_updated: Option<Instant> = None;
     let mut active_tab = Tab::Overview;
 
@@ -695,6 +653,19 @@ fn main() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pad_col_pads_short_text_and_appends_separator() {
+        assert_eq!(pad_col("en0", 8), "en0      ");
+    }
+
+    #[test]
+    fn pad_col_still_separates_text_longer_than_width() {
+        assert_eq!(
+            pad_col("a-very-long-target-name", 8),
+            "a-very-long-target-name "
+        );
+    }
 
     #[test]
     fn format_age_shows_seconds_under_a_minute() {

@@ -17,7 +17,15 @@ struct VpnStatus: Codable {
 }
 
 struct Resolver: Codable, Identifiable {
-    var id: String { (domain ?? searchDomains.first ?? "*") + (ifName ?? "") }
+    // `domain` + `ifName` alone can collide: the systemwide-default entry
+    // for the primary service always carries `ifName == nil`, and a scoped
+    // entry whose own interface-name lookup fails also reports `ifName ==
+    // nil` — if both share a domain, `scoped` and `nameservers` are what
+    // still tell them apart.
+    var id: String {
+        (domain ?? searchDomains.first ?? "*") + (ifName ?? "") + (scoped ? "s" : "u")
+            + nameservers.joined(separator: ",")
+    }
     let domain: String?
     let searchDomains: [String]
     let nameservers: [String]
