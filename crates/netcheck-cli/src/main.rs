@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(
     name = "netcheck",
+    version = netstatus::VERSION,
     about = "Holistic view of macOS network status",
     long_about = "Holistic view of macOS network status.\n\n\
         Every subcommand prints JSON to stdout, except `stream`, which \

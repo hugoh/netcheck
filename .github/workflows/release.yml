@@ -65,6 +65,7 @@ jobs:
         if: steps.tag.outputs.skip != 'true'
         env:
           TAG: ${{ steps.tag.outputs.tag }}
+          NETCHECK_VERSION: ${{ steps.tag.outputs.version }}
         run: |
           cargo build --release --workspace --locked
           mkdir -p dist

@@ -587,7 +587,8 @@ fn draw(
         let auto_state = if auto_refresh { "on, every 5s" } else { "off" };
         frame.render_widget(
             Paragraph::new(format!(
-                "q: quit   r: refresh now   a: auto-refresh ({auto_state})   1-4: tabs   {age}"
+                "q: quit   r: refresh now   a: auto-refresh ({auto_state})   1-4: tabs   {age}   netcheck {}",
+                netstatus::VERSION
             )),
             rows[2],
         );

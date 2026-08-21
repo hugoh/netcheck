@@ -470,6 +470,7 @@ impl eframe::App for App {
         egui::Panel::top("header").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("netcheck");
+                ui.label(egui::RichText::new(netstatus::VERSION).weak());
                 if ui.button("Refresh now [r]").clicked() {
                     let _ = self.manual_refresh.send(());
                 }

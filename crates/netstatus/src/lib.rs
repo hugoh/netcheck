@@ -10,6 +10,11 @@ mod status;
 mod vpn;
 mod wifi;
 
+/// The running binary's version — a release tag (e.g. "1.2.3") set by CI via
+/// `NETCHECK_VERSION`, or `dev-<short-sha>` (or plain `dev` with no git) for
+/// local builds. See `build.rs`.
+pub const VERSION: &str = env!("NETCHECK_VERSION");
+
 pub use connect::{ConnectResult, connect, connect_all};
 pub use dns::{Resolver, has_split_dns, list_resolvers};
 pub use interfaces::{

@@ -50,6 +50,12 @@ struct ContentView: View {
     @ObservedObject var fetcher: StatusFetcher
     @State private var activeTab: Tab = .overview
 
+    /// CFBundleShortVersionString, set by mise's build:app (dev, "dev-<sha>")
+    /// or bundle:swiftui (release, the real tag) — see Info.plist.
+    private static var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
+    }
+
     var body: some View {
         Group {
             if fetcher.status.hasAny {
@@ -69,7 +75,10 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
-                Text("netcheck").font(.headline)
+                HStack(spacing: 6) {
+                    Text("netcheck").font(.headline)
+                    Text(Self.appVersion).foregroundStyle(.secondary)
+                }
             }
             ToolbarItem {
                 Picker("", selection: $activeTab) {

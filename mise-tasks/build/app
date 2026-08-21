@@ -9,6 +9,15 @@ CONTENTS_DIR="$APP/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
+# Matches crates/netstatus/build.rs's dev-version scheme, so the .app's
+# displayed version lines up with the embedded netcheck binary's.
+VERSION="${NETCHECK_VERSION:-}"
+if [ "$VERSION" = "" ]; then
+	SHA="$(cd "$ROOT_DIR" && git rev-parse --short=8 HEAD 2>/dev/null || true)"
+	VERSION="${SHA:+dev-$SHA}"
+	VERSION="${VERSION:-dev}"
+fi
+
 (cd "$ROOT_DIR/apps/NetCheckMac" && swift build)
 
 rm -rf "$APP"
@@ -34,7 +43,7 @@ cat >"$CONTENTS_DIR/Info.plist" <<INFOPLIST
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.0.0-dev</string>
+    <string>$VERSION</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
