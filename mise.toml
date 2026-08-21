@@ -17,6 +17,7 @@ shfmt = "3.13.1"
 cocogitto = "7.0.0"
 "cargo:cargo-deny" = "0.20.2"
 "cargo:cargo-audit" = "0.22.2"
+cargo-binstall = "1.21.0"
 
 [tasks."build:cli"]
 description = "Build a dev netcheck-cli binary"
