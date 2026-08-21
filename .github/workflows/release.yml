@@ -1,0 +1,99 @@
+---
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        type: choice
+        description: "Version bump type"
+        default: auto
+        options: [auto, patch, minor, major]
+
+permissions: {}
+
+jobs:
+  release:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+    steps:
+      - uses: hugoh/gh-workflows/setup@e3deb909891d6fc8089311f2e91e85796eb6c725 # v1.9.2
+        with:
+          fetch-depth: "0"
+
+      - name: Guard manual dispatch to main
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        env:
+          GITHUB_REF: ${{ github.ref }}
+        run: |
+          echo "::error::Manual bump_type dispatch must run on main (got ${GITHUB_REF})"
+          exit 1
+
+      - name: Semver release
+        uses: cocogitto/cocogitto-action@9a9fe03b31c47444290c0d7f9b1ee1b44ee13f20 # v4.1.0
+        with:
+          command: bump
+          args: ${{ inputs.bump_type == 'auto' && '--auto' || format('--{0}', inputs.bump_type) }}
+
+      - name: Determine tag
+        id: tag
+        run: |
+          TAG=$(git tag --points-at HEAD | head -1)
+          if [ -z "$TAG" ]; then
+            echo "No tag at HEAD — skipping release"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Push tag
+        if: steps.tag.outputs.skip != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}"
+          git push origin "${TAG}"
+
+      - name: Build CLI/TUI release binaries
+        if: steps.tag.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          cargo build --release --workspace --locked
+          mkdir -p dist
+          tar -czf "dist/netcheck-${TAG#v}-aarch64-apple-darwin.tar.gz" \
+            -C target/release netcheck netcheck-tui
+
+      - name: Build & bundle NetCheckMac.app
+        if: steps.tag.outputs.skip != 'true'
+        env:
+          NETCHECK_VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          ./scripts/bundle-swiftui.sh
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent \
+            target/NetCheckMac.app "dist/NetCheckMac-${NETCHECK_VERSION}.zip"
+
+      - name: Create GitHub release
+        if: steps.tag.outputs.skip != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: gh release create "${TAG}" dist/* --generate-notes
+
+      - name: Update Homebrew tap
+        if: steps.tag.outputs.skip != 'true'
+        env:
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          ./scripts/update-homebrew-tap.sh "${VERSION}" \
+            "dist/netcheck-${VERSION}-aarch64-apple-darwin.tar.gz" \
+            "dist/NetCheckMac-${VERSION}.zip"

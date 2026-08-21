@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Builds apps/NetCheckMac in release mode and wraps it in a standard macOS
+# .app bundle, same purpose as bundle-macos.sh but for the SwiftUI app.
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SWIFT_DIR="$ROOT_DIR/apps/NetCheckMac"
+APP_NAME="NetCheckMac"
+BUNDLE_ID="net.hugoh.netcheckmac"
+VERSION="${NETCHECK_VERSION:-0.0.0}"
+
+BUILD_DIR="$SWIFT_DIR/.build/release"
+APP_DIR="$ROOT_DIR/target/${APP_NAME}.app"
+CONTENTS_DIR="$APP_DIR/Contents"
+MACOS_DIR="$CONTENTS_DIR/MacOS"
+RESOURCES_DIR="$CONTENTS_DIR/Resources"
+
+echo "Building $APP_NAME (release)..."
+(cd "$SWIFT_DIR" && swift build -c release)
+
+echo "Assembling $APP_DIR..."
+rm -rf "$APP_DIR"
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
+
+cp "$BUILD_DIR/$APP_NAME" "$MACOS_DIR/$APP_NAME"
+
+cat >"$CONTENTS_DIR/Info.plist" <<INFOPLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>${APP_NAME}</string>
+    <key>CFBundleDisplayName</key>
+    <string>netcheck</string>
+    <key>CFBundleIdentifier</key>
+    <string>${BUNDLE_ID}</string>
+    <key>CFBundleVersion</key>
+    <string>${VERSION}</string>
+    <key>CFBundleShortVersionString</key>
+    <string>${VERSION}</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleExecutable</key>
+    <string>${APP_NAME}</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.utilities</string>
+</dict>
+</plist>
+INFOPLIST
+
+if [ -f "$ROOT_DIR/assets/AppIcon.icns" ]; then
+    cp "$ROOT_DIR/assets/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
+else
+    echo "No assets/AppIcon.icns found — bundling without a custom icon."
+fi
+
+echo "Ad-hoc signing..."
+codesign --force --deep --sign - "$APP_DIR"
+
+echo "Done: $APP_DIR"
+echo "Run with: open \"$APP_DIR\""

@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Publishes/updates the "netcheck" and "netcheckmac" Homebrew Casks in
+# hugoh/homebrew-tap. Hand-rolled (not GoReleaser-generated like the Go
+# fleet's casks) since GoReleaser doesn't build Rust/Swift, but follows the
+# same on_macos/on_arm block structure as the existing casks there.
+#
+# Usage: update-homebrew-tap.sh <version-without-v> <cli-tarball> <netcheckmac-zip>
+# Requires TAP_GITHUB_TOKEN in the environment.
+
+VERSION="$1"
+CLI_TARBALL="$2"
+NETCHECKMAC_ZIP="$3"
+
+: "${TAP_GITHUB_TOKEN:?TAP_GITHUB_TOKEN must be set}"
+
+CLI_SHA="$(shasum -a 256 "$CLI_TARBALL" | cut -d' ' -f1)"
+NETCHECKMAC_SHA="$(shasum -a 256 "$NETCHECKMAC_ZIP" | cut -d' ' -f1)"
+
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR"' EXIT
+
+git clone "https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/hugoh/homebrew-tap.git" "$WORK_DIR"
+
+cat >"$WORK_DIR/Casks/netcheck.rb" <<EOF
+cask "netcheck" do
+  version "${VERSION}"
+
+  on_macos do
+    on_arm do
+      sha256 "${CLI_SHA}"
+      url "https://github.com/hugoh/netcheck/releases/download/v#{version}/netcheck-#{version}-aarch64-apple-darwin.tar.gz"
+    end
+  end
+
+  name "netcheck"
+  desc "Holistic view of macOS network status: interfaces, VPN, DNS, reachability"
+  homepage "https://github.com/hugoh/netcheck"
+
+  livecheck do
+    skip "Auto-generated on release."
+  end
+
+  binary "netcheck"
+  binary "netcheck-tui"
+end
+EOF
+
+cat >"$WORK_DIR/Casks/netcheckmac.rb" <<EOF
+cask "netcheckmac" do
+  version "${VERSION}"
+
+  on_macos do
+    on_arm do
+      sha256 "${NETCHECKMAC_SHA}"
+      url "https://github.com/hugoh/netcheck/releases/download/v#{version}/NetCheckMac-#{version}.zip"
+    end
+  end
+
+  name "NetCheckMac"
+  desc "Native SwiftUI macOS network status app"
+  homepage "https://github.com/hugoh/netcheck"
+
+  livecheck do
+    skip "Auto-generated on release."
+  end
+
+  app "NetCheckMac.app"
+end
+EOF
+
+cd "$WORK_DIR"
+git config user.name "netcheck-release-bot"
+git config user.email "noreply@hugoh.net"
+git add Casks/netcheck.rb Casks/netcheckmac.rb
+if git diff --cached --quiet; then
+    echo "No changes to publish"
+    exit 0
+fi
+git commit -m "chore: update netcheck casks to v${VERSION}"
+git push origin HEAD:main
