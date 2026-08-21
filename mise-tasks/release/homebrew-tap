@@ -68,6 +68,15 @@ cask "netcheckmac" do
   end
 
   app "NetCheckMac.app"
+
+  postflight do
+    # Ad-hoc signed (no Developer ID / notarization), so strip the
+    # quarantine attribute Homebrew sets on the downloaded artifact —
+    # otherwise Gatekeeper refuses to launch it as "from an unidentified
+    # developer" on first open.
+    system_command "/usr/bin/xattr",
+                    args: ["-cr", "#{appdir}/NetCheckMac.app"]
+  end
 end
 EOF
 
