@@ -659,6 +659,26 @@ impl eframe::App for App {
     }
 }
 
+/// egui's bundled default proportional font is Ubuntu-Light, which reads as
+/// too thin at normal UI sizes. Swap in the macOS system UI font instead —
+/// this app only ever runs on macOS, so the file is always present.
+fn install_system_font(ctx: &egui::Context) {
+    let Ok(bytes) = std::fs::read("/System/Library/Fonts/SFNS.ttf") else {
+        return;
+    };
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "system-ui".to_owned(),
+        Arc::new(egui::FontData::from_owned(bytes)),
+    );
+    fonts
+        .families
+        .entry(egui::FontFamily::Proportional)
+        .or_default()
+        .insert(0, "system-ui".to_owned());
+    ctx.set_fonts(fonts);
+}
+
 fn load_icon() -> egui::IconData {
     let bytes = include_bytes!("../../../assets/icon-1024.png");
     let image = image::load_from_memory(bytes)
@@ -683,6 +703,9 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "netcheck",
         options,
-        Box::new(|_cc| Ok(Box::new(App::new()))),
+        Box::new(|cc| {
+            install_system_font(&cc.egui_ctx);
+            Ok(Box::new(App::new()))
+        }),
     )
 }
