@@ -1,16 +1,19 @@
 import Foundation
 
-/// Runs the `netcheck` CLI's `status` subcommand and decodes its JSON output.
-/// Reuses the already-tested Rust `netstatus` core instead of re-implementing
-/// any diagnostics in Swift.
+/// Runs the `netcheck` CLI's `stream` subcommand and decodes its NDJSON
+/// output line by line as it arrives, publishing each field the moment it's
+/// ready instead of waiting for a full snapshot — mirrors netcheck-tui/-gui's
+/// streamed `PartialStatus` model. Reuses the already-tested Rust `netstatus`
+/// core instead of re-implementing any diagnostics in Swift.
 @MainActor
 final class StatusFetcher: ObservableObject {
-    @Published var status: NetworkStatus?
+    @Published var status = PartialNetworkStatus()
     @Published var lastUpdated: Date?
     @Published var autoRefreshEnabled = false
     @Published var errorMessage: String?
 
     private var timer: Timer?
+    private var refreshTask: Task<Void, Never>?
     private let binaryURL: URL?
 
     init() {
@@ -38,36 +41,57 @@ final class StatusFetcher: ObservableObject {
                 "cargo build --release -p netcheck-cli"
             return
         }
-        Task.detached(priority: .userInitiated) {
+
+        refreshTask?.cancel()
+        refreshTask = Task {
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+
             do {
-                let data = try Self.runProcess(url: binaryURL, args: ["status"])
-                let decoder = JSONDecoder()
-                decoder.keyDecodingStrategy = .convertFromSnakeCase
-                let decoded = try decoder.decode(NetworkStatus.self, from: data)
-                await MainActor.run { [weak self] in
-                    self?.status = decoded
-                    self?.lastUpdated = Date()
-                    self?.errorMessage = nil
+                for try await line in Self.streamLines(url: binaryURL, args: ["stream"]) {
+                    guard !line.isEmpty, let data = line.data(using: .utf8) else { continue }
+                    let envelope = try decoder.decode(StatusFieldEnvelope.self, from: data)
+                    status.merge(envelope)
+                    lastUpdated = Date()
+                    errorMessage = nil
                 }
+            } catch is CancellationError {
+                // Superseded by a newer refresh; nothing to report.
             } catch {
-                await MainActor.run { [weak self] in
-                    self?.errorMessage = "Failed to run netcheck: \(error.localizedDescription)"
-                }
+                errorMessage = "Failed to run netcheck: \(error.localizedDescription)"
             }
         }
     }
 
-    private nonisolated static func runProcess(url: URL, args: [String]) throws -> Data {
-        let process = Process()
-        process.executableURL = url
-        process.arguments = args
-        let outPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = Pipe()
-        try process.run()
-        let data = outPipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return data
+    /// Runs `netcheck stream` and yields each line of its stdout as it's
+    /// written — no waiting for the process to exit, no blocking reads.
+    private nonisolated static func streamLines(url: URL, args: [String]) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            let process = Process()
+            process.executableURL = url
+            process.arguments = args
+            let outPipe = Pipe()
+            process.standardOutput = outPipe
+            process.standardError = Pipe()
+
+            let readTask = Task {
+                do {
+                    try process.run()
+                    for try await line in outPipe.fileHandleForReading.bytes.lines {
+                        continuation.yield(line)
+                    }
+                    process.waitUntilExit()
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                readTask.cancel()
+                if process.isRunning { process.terminate() }
+            }
+        }
     }
 
     private static func locateBinary() -> URL? {

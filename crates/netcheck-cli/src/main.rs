@@ -11,6 +11,8 @@ struct Cli {
 enum Command {
     /// Print a full network status snapshot as JSON
     Status,
+    /// Stream each status field as one JSON line, as soon as it's ready
+    Stream,
     /// Print network interfaces as JSON
     Interfaces,
     /// Print DNS resolver configuration as JSON
@@ -52,6 +54,20 @@ fn main() {
 
     match cli.command {
         Command::Status => print_json(&netstatus::collect()),
+        Command::Stream => {
+            use std::io::Write;
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || netstatus::collect_streaming(tx));
+            let mut stdout = std::io::stdout();
+            for field in rx {
+                let _ = writeln!(
+                    stdout,
+                    "{}",
+                    serde_json::to_string(&field).expect("serializable status field")
+                );
+                let _ = stdout.flush();
+            }
+        }
         Command::Interfaces => print_json(&netstatus::list_interfaces()),
         Command::Dns => print_json(&netstatus::list_resolvers()),
         Command::Vpn => print_json(&netstatus::vpn_status(&netstatus::list_interfaces())),

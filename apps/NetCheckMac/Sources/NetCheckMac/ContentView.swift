@@ -22,13 +22,38 @@ struct PanelBox<Content: View>: View {
     }
 }
 
+struct CollectingPlaceholder: View {
+    var body: some View {
+        Text("Collecting...")
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+}
+
+enum Tab: Int, CaseIterable {
+    case overview = 1
+    case dns = 2
+    case reachability = 3
+    case wifi = 4
+
+    var label: String {
+        switch self {
+        case .overview: return "Overview"
+        case .dns: return "DNS"
+        case .reachability: return "Reachability"
+        case .wifi: return "Wi-Fi"
+        }
+    }
+}
+
 struct ContentView: View {
     @ObservedObject var fetcher: StatusFetcher
+    @State private var activeTab: Tab = .overview
 
     var body: some View {
         Group {
-            if let status = fetcher.status {
-                statusGrid(status)
+            if fetcher.status.hasAny {
+                tabbedContent(fetcher.status)
             } else if let error = fetcher.errorMessage {
                 VStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -45,6 +70,14 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Text("netcheck").font(.headline)
+            }
+            ToolbarItem {
+                Picker("", selection: $activeTab) {
+                    ForEach(Tab.allCases, id: \.self) { tab in
+                        Text("[\(tab.rawValue)] \(tab.label)").tag(tab)
+                    }
+                }
+                .pickerStyle(.segmented)
             }
             ToolbarItem {
                 Button {
@@ -68,53 +101,131 @@ struct ContentView: View {
                 }
             }
         }
+        .background(tabKeyShortcuts)
+    }
+
+    /// Hidden buttons carrying keyboard shortcuts 1-4, matching
+    /// netcheck-tui/-gui's number-key tab switching.
+    private var tabKeyShortcuts: some View {
+        ForEach(Tab.allCases, id: \.self) { tab in
+            Button("") { activeTab = tab }
+                .keyboardShortcut(KeyEquivalent(Character("\(tab.rawValue)")), modifiers: [])
+                .opacity(0)
+                .frame(width: 0, height: 0)
+        }
     }
 
     @ViewBuilder
-    private func statusGrid(_ status: NetworkStatus) -> some View {
+    private func tabbedContent(_ status: PartialNetworkStatus) -> some View {
+        switch activeTab {
+        case .overview: overviewTab(status)
+        case .dns: dnsTab(status)
+        case .reachability: reachabilityTab(status)
+        case .wifi:
+            PanelBox(title: "Wi-Fi") { wifiDetail(status.wifi) }
+                .padding(12)
+        }
+    }
+
+    @ViewBuilder
+    private func overviewTab(_ status: PartialNetworkStatus) -> some View {
         HStack(alignment: .top, spacing: 12) {
             PanelBox(title: "Interfaces") {
-                List(
-                    status.interfaces
-                        .filter { !$0.loopback }
-                        .sorted { classify($0) < classify($1) }
-                ) { iface in
-                    let cls = classify(iface)
-                    HStack {
-                        Text(iface.name).font(.system(.body, design: .monospaced))
-                        Text(cls.label)
-                            .font(.caption)
-                            .foregroundStyle(cls.color)
-                        Spacer()
-                        Text(iface.addresses.isEmpty ? "—" : iface.addresses.joined(separator: ", "))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                if let interfaces = status.interfaces {
+                    List(interfaces.filter { !$0.loopback }.sorted { classify($0) < classify($1) }) { iface in
+                        let cls = classify(iface)
+                        HStack {
+                            Text(iface.name).font(.system(.body, design: .monospaced))
+                            Text(cls.label)
+                                .font(.caption)
+                                .foregroundStyle(cls.color)
+                            Spacer()
+                            Text(iface.addresses.isEmpty ? "—" : iface.addresses.joined(separator: ", "))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
                     }
+                    .listStyle(.inset(alternatesRowBackgrounds: true))
+                } else {
+                    CollectingPlaceholder()
                 }
-                .listStyle(.inset(alternatesRowBackgrounds: true))
             }
 
             VStack(spacing: 12) {
                 PanelBox(title: "VPN / Tunnel") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Primary interface: \(status.vpn.primaryInterface ?? "unknown")")
-                        HStack {
-                            StatusIcon(ok: status.vpn.connected)
-                            Text("VPN connected: \(status.vpn.connected ? "yes" : "no")")
+                    if let vpn = status.vpn {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Primary interface: \(vpn.primaryInterface ?? "unknown")")
+                            HStack {
+                                StatusIcon(ok: vpn.connected)
+                                Text("VPN connected: \(vpn.connected ? "yes" : "no")")
+                            }
+                            Text("Split tunnel: \(vpn.splitTunnel ? "yes" : "no")")
+                            Text("Split DNS: \(status.splitDns.map { $0 ? "yes" : "no" } ?? "collecting...")")
+                            if !vpn.tunnels.isEmpty {
+                                Text("Tunnels: \(vpn.tunnels.joined(separator: ", "))")
+                            }
                         }
-                        Text("Split tunnel: \(status.vpn.splitTunnel ? "yes" : "no")")
-                        Text("Split DNS: \(status.splitDns ? "yes" : "no")")
-                        if !status.vpn.tunnels.isEmpty {
-                            Text("Tunnels: \(status.vpn.tunnels.joined(separator: ", "))")
-                        }
+                        .padding(8)
+                    } else {
+                        CollectingPlaceholder()
                     }
-                    .padding(8)
                 }
-                .frame(height: 150)
+                .frame(height: 130)
 
-                PanelBox(title: "DNS resolvers") {
-                    List(status.resolvers.filter { !$0.nameservers.isEmpty }) { r in
+                PanelBox(title: "Proxy") {
+                    if let proxy = status.proxy {
+                        VStack(alignment: .leading, spacing: 6) {
+                            proxyEndpointLine("HTTP", proxy.http)
+                            proxyEndpointLine("HTTPS", proxy.https)
+                            proxyEndpointLine("SOCKS", proxy.socks)
+                            Text(proxy.pacUrl.map { "PAC: \($0)" } ?? "PAC: off")
+                            if !proxy.exceptions.isEmpty {
+                                Text("Exceptions: \(proxy.exceptions.joined(separator: ", "))")
+                            }
+                        }
+                        .padding(8)
+                    } else {
+                        CollectingPlaceholder()
+                    }
+                }
+                .frame(height: 130)
+
+                PanelBox(title: "IP stack") {
+                    Text(ipStackLabel(status.ipStack))
+                        .padding(8)
+                }
+                .frame(height: 60)
+            }
+        }
+        .padding(12)
+    }
+
+    private func proxyEndpointLine(_ label: String, _ endpoint: ProxyEndpoint) -> some View {
+        Text(
+            endpoint.enabled
+                ? "\(label): \(endpoint.host ?? "?"):\(endpoint.port.map(String.init) ?? "?")"
+                : "\(label): off"
+        )
+    }
+
+    private func ipStackLabel(_ ipStack: IpStack?) -> String {
+        guard let ipStack else { return "Collecting..." }
+        switch ipStack {
+        case .ipv4Only: return "IPv4 only"
+        case .ipv6Only: return "IPv6 only"
+        case .dualStack: return "Dual-stack (IPv4 + IPv6)"
+        case .none: return "No routable address"
+        }
+    }
+
+    @ViewBuilder
+    private func dnsTab(_ status: PartialNetworkStatus) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            PanelBox(title: "DNS resolvers") {
+                if let resolvers = status.resolvers {
+                    List(resolvers.filter { !$0.nameservers.isEmpty }) { r in
                         HStack {
                             StatusIcon(ok: r.reachable)
                             Text(r.domain ?? r.searchDomains.first ?? "*")
@@ -124,10 +235,14 @@ struct ContentView: View {
                         }
                     }
                     .listStyle(.inset(alternatesRowBackgrounds: true))
+                } else {
+                    CollectingPlaceholder()
                 }
+            }
 
-                PanelBox(title: "DNS resolution") {
-                    List(status.resolution) { r in
+            PanelBox(title: "DNS resolution") {
+                if let resolution = status.resolution {
+                    List(resolution) { r in
                         HStack {
                             StatusIcon(ok: r.resolved)
                             Text(r.domain)
@@ -138,25 +253,26 @@ struct ContentView: View {
                         }
                     }
                     .listStyle(.inset(alternatesRowBackgrounds: true))
+                } else {
+                    CollectingPlaceholder()
                 }
             }
+        }
+        .padding(12)
+    }
 
-            VStack(spacing: 12) {
-                PanelBox(title: "Reachability (IPs)") {
-                    List(status.reachability) { p in
-                        HStack {
-                            StatusIcon(ok: p.reachable)
-                            Text(p.target)
-                            Spacer()
-                            Text(p.rttMs.map { String(format: "%.1f ms", $0) } ?? "timeout")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .listStyle(.inset(alternatesRowBackgrounds: true))
-                }
-
-                PanelBox(title: "Reachability (domains, TCP:443)") {
-                    List(status.domainReachability) { c in
+    @ViewBuilder
+    private func reachabilityTab(_ status: PartialNetworkStatus) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            PanelBox(title: "Reachability (IPv4)") {
+                pingList(status.reachability)
+            }
+            PanelBox(title: "Reachability (IPv6)") {
+                pingList(status.reachabilityV6)
+            }
+            PanelBox(title: "Reachability (domains, TCP:443)") {
+                if let results = status.domainReachability {
+                    List(results) { c in
                         HStack {
                             StatusIcon(ok: c.reachable)
                             Text(c.target)
@@ -166,9 +282,48 @@ struct ContentView: View {
                         }
                     }
                     .listStyle(.inset(alternatesRowBackgrounds: true))
+                } else {
+                    CollectingPlaceholder()
                 }
             }
         }
         .padding(12)
+    }
+
+    @ViewBuilder
+    private func pingList(_ results: [PingResult]?) -> some View {
+        if let results {
+            List(results) { p in
+                HStack {
+                    StatusIcon(ok: p.reachable)
+                    Text(p.target)
+                    Spacer()
+                    Text(p.rttMs.map { String(format: "%.1f ms", $0) } ?? "timeout")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .listStyle(.inset(alternatesRowBackgrounds: true))
+        } else {
+            CollectingPlaceholder()
+        }
+    }
+
+    @ViewBuilder
+    private func wifiDetail(_ wifi: WifiStatus?) -> some View {
+        if let wifi, wifi.connected {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("SSID: \(wifi.ssid ?? "-")")
+                Text("Channel: \(wifi.channel ?? "-")")
+                Text("Signal: \(wifi.signalDbm.map { "\($0) dBm" } ?? "-")")
+                Text("Noise: \(wifi.noiseDbm.map { "\($0) dBm" } ?? "-")")
+                Text("Security: \(wifi.security ?? "-")")
+                Text("PHY mode: \(wifi.phyMode ?? "-")")
+            }
+            .padding(8)
+        } else if wifi != nil {
+            Text("Not connected").foregroundStyle(.secondary).padding(8)
+        } else {
+            CollectingPlaceholder()
+        }
     }
 }
