@@ -545,10 +545,12 @@ impl eframe::App for App {
                                         .clone()
                                         .unwrap_or_else(|| "unknown".into())
                                 ));
-                                ui.colored_label(
-                                    if vpn.connected { GOOD } else { BAD },
-                                    format!("VPN connected: {}", vpn.connected),
-                                );
+                                let vpn_line = format!("VPN connected: {}", vpn.connected);
+                                if vpn.connected {
+                                    ui.colored_label(GOOD, vpn_line);
+                                } else {
+                                    ui.label(vpn_line);
+                                }
                                 ui.label(format!("Split tunnel: {}", vpn.split_tunnel));
                                 ui.label(format!(
                                     "Split DNS: {}",
