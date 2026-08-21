@@ -14,6 +14,26 @@ pub struct WifiStatus {
     pub phy_mode: Option<String>,
 }
 
+/// SSID/connected-state, the slow half of Wi-Fi status — only obtainable via
+/// `system_profiler` (a ~1s shell-out), since reading it through CoreWLAN
+/// needs Location Services authorization a bare CLI/TUI binary can't get.
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+pub struct WifiIdentity {
+    pub connected: bool,
+    pub ssid: Option<String>,
+}
+
+/// Channel/signal/noise/security/PHY-mode, the fast half of Wi-Fi status —
+/// read straight from CoreWLAN (`CWWiFiClient`/`CWInterface`), no shell-out.
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+pub struct WifiRadio {
+    pub channel: Option<String>,
+    pub signal_dbm: Option<i32>,
+    pub noise_dbm: Option<i32>,
+    pub security: Option<String>,
+    pub phy_mode: Option<String>,
+}
+
 pub(crate) fn parse_wifi_json(json: &str) -> WifiStatus {
     let Ok(root) = serde_json::from_str::<Value>(json) else {
         return WifiStatus::default();
@@ -82,19 +102,6 @@ fn parse_signal_noise(text: &str) -> Option<(i32, i32)> {
     Some((parse_dbm(signal)?, parse_dbm(noise)?))
 }
 
-/// Fields obtainable from CoreWLAN without Location Services authorization.
-/// SSID (and, by extension, `connected`) requires that authorization, which
-/// a bare CLI/TUI binary has no way to obtain — those two still come from
-/// `system_profiler`.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub(crate) struct CoreWlanFields {
-    pub channel: Option<String>,
-    pub signal_dbm: Option<i32>,
-    pub noise_dbm: Option<i32>,
-    pub security: Option<String>,
-    pub phy_mode: Option<String>,
-}
-
 fn format_channel(number: isize, band: CWChannelBand, width: CWChannelWidth) -> String {
     let band = match band {
         CWChannelBand::Band2GHz => "2.4GHz",
@@ -144,9 +151,10 @@ fn format_phy_mode(phy: CWPHYMode) -> &'static str {
 /// Reads channel/signal/noise/security/PHY-mode straight from CoreWLAN
 /// (`CWWiFiClient`/`CWInterface`) — no shell-out, no Location Services
 /// authorization needed for these particular properties (unlike SSID).
-fn corewlan_fields() -> CoreWlanFields {
+/// Fast: no subprocess, returns in well under a millisecond.
+pub fn wifi_radio() -> WifiRadio {
     let Some(iface) = (unsafe { CWWiFiClient::sharedWiFiClient().interface() }) else {
-        return CoreWlanFields::default();
+        return WifiRadio::default();
     };
 
     let channel = unsafe { iface.wlanChannel() }.map(|c| {
@@ -161,7 +169,7 @@ fn corewlan_fields() -> CoreWlanFields {
     let security = Some(format_security(unsafe { iface.security() }).to_string());
     let phy_mode = Some(format_phy_mode(unsafe { iface.activePHYMode() }).to_string());
 
-    CoreWlanFields {
+    WifiRadio {
         channel,
         signal_dbm,
         noise_dbm,
@@ -170,32 +178,42 @@ fn corewlan_fields() -> CoreWlanFields {
     }
 }
 
-fn system_profiler_status() -> WifiStatus {
+/// Reads SSID/connected-state via `system_profiler SPAirPortDataType
+/// -json` — the only source a bare binary can reach without Location
+/// Services authorization. Slow: a subprocess call, commonly ~1s.
+pub fn wifi_identity() -> WifiIdentity {
     let output = Command::new("system_profiler")
         .args(["SPAirPortDataType", "-json"])
         .output()
         .expect("system_profiler should be runnable on macOS");
-    parse_wifi_json(&String::from_utf8_lossy(&output.stdout))
+    let status = parse_wifi_json(&String::from_utf8_lossy(&output.stdout));
+    WifiIdentity {
+        connected: status.connected,
+        ssid: status.ssid,
+    }
 }
 
-/// SSID and connected-state come from `system_profiler` (the only source a
-/// bare binary can reach without Location Services authorization);
-/// channel/signal/noise/security/PHY-mode come natively from CoreWLAN,
-/// overriding `system_profiler`'s (potentially stale) versions of the same
-/// fields whenever CoreWLAN successfully reports them.
+/// The combined snapshot `netcheck wifi`/`netcheck status` report — SSID
+/// and connected-state from `system_profiler`, everything else natively
+/// from CoreWLAN. For streaming (`collect_streaming`), `wifi_identity` and
+/// `wifi_radio` run as independent probes instead, so the fast CoreWLAN
+/// fields don't wait on the slow `system_profiler` call.
 pub fn wifi_status() -> WifiStatus {
-    let mut status = system_profiler_status();
-    if !status.connected {
-        return status;
+    let identity = wifi_identity();
+    if !identity.connected {
+        return WifiStatus::default();
     }
 
-    let native = corewlan_fields();
-    status.channel = native.channel.or(status.channel);
-    status.signal_dbm = native.signal_dbm.or(status.signal_dbm);
-    status.noise_dbm = native.noise_dbm.or(status.noise_dbm);
-    status.security = native.security.or(status.security);
-    status.phy_mode = native.phy_mode.or(status.phy_mode);
-    status
+    let radio = wifi_radio();
+    WifiStatus {
+        connected: identity.connected,
+        ssid: identity.ssid,
+        channel: radio.channel,
+        signal_dbm: radio.signal_dbm,
+        noise_dbm: radio.noise_dbm,
+        security: radio.security,
+        phy_mode: radio.phy_mode,
+    }
 }
 
 #[cfg(test)]

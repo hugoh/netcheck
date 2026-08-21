@@ -6,7 +6,7 @@ use crate::proxy::{self, ProxyConfig};
 use crate::reachability::{self, PingResult};
 use crate::resolution::{self, DEFAULT_RESOLUTION_TARGETS, ResolutionResult};
 use crate::vpn::{self, VpnStatus};
-use crate::wifi::{self, WifiStatus};
+use crate::wifi::{self, WifiIdentity, WifiRadio, WifiStatus};
 use serde::Serialize;
 use std::sync::mpsc;
 
@@ -103,7 +103,8 @@ pub enum StatusField {
     Resolution(Vec<ResolutionResult>),
     DomainReachability(Vec<ConnectResult>),
     Proxy(ProxyConfig),
-    Wifi(WifiStatus),
+    WifiIdentity(WifiIdentity),
+    WifiRadio(WifiRadio),
     IpStack(IpStack),
 }
 
@@ -148,8 +149,16 @@ pub fn collect_streaming(tx: mpsc::Sender<StatusField>) {
         scope.spawn(|| {
             let _ = tx.send(StatusField::Proxy(proxy::proxy_config()));
         });
+        // Two independent probes, not one: wifi_radio() is a fast CoreWLAN
+        // call (no shell-out) while wifi_identity() shells to
+        // system_profiler (~1s). Splitting them means the radio panel's
+        // fields show up immediately instead of waiting on the slow SSID
+        // lookup.
         scope.spawn(|| {
-            let _ = tx.send(StatusField::Wifi(wifi::wifi_status()));
+            let _ = tx.send(StatusField::WifiRadio(wifi::wifi_radio()));
+        });
+        scope.spawn(|| {
+            let _ = tx.send(StatusField::WifiIdentity(wifi::wifi_identity()));
         });
     });
 }
@@ -178,12 +187,12 @@ mod tests {
         let received: Vec<StatusField> = rx.into_iter().collect();
         assert_eq!(
             received.len(),
-            11,
-            "expected exactly 11 StatusField messages, got {}: {received:?}",
+            12,
+            "expected exactly 12 StatusField messages, got {}: {received:?}",
             received.len()
         );
 
-        let all_variants: [StatusField; 11] = [
+        let all_variants: [StatusField; 12] = [
             StatusField::Interfaces(Vec::new()),
             StatusField::Vpn(VpnStatus {
                 tunnels: Vec::new(),
@@ -217,7 +226,8 @@ mod tests {
                 pac_url: None,
                 exceptions: Vec::new(),
             }),
-            StatusField::Wifi(WifiStatus::default()),
+            StatusField::WifiIdentity(WifiIdentity::default()),
+            StatusField::WifiRadio(WifiRadio::default()),
             StatusField::IpStack(IpStack::None),
         ];
 

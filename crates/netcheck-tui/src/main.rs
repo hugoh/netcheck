@@ -40,7 +40,8 @@ struct PartialStatus {
     resolution: Option<Vec<netstatus::ResolutionResult>>,
     domain_reachability: Option<Vec<netstatus::ConnectResult>>,
     proxy: Option<netstatus::ProxyConfig>,
-    wifi: Option<netstatus::WifiStatus>,
+    wifi_identity: Option<netstatus::WifiIdentity>,
+    wifi_radio: Option<netstatus::WifiRadio>,
     ip_stack: Option<netstatus::IpStack>,
 }
 
@@ -56,7 +57,8 @@ impl PartialStatus {
             StatusField::Resolution(v) => self.resolution = Some(v),
             StatusField::DomainReachability(v) => self.domain_reachability = Some(v),
             StatusField::Proxy(v) => self.proxy = Some(v),
-            StatusField::Wifi(v) => self.wifi = Some(v),
+            StatusField::WifiIdentity(v) => self.wifi_identity = Some(v),
+            StatusField::WifiRadio(v) => self.wifi_radio = Some(v),
             StatusField::IpStack(v) => self.ip_stack = Some(v),
         }
     }
@@ -71,7 +73,8 @@ impl PartialStatus {
             || self.resolution.is_some()
             || self.domain_reachability.is_some()
             || self.proxy.is_some()
-            || self.wifi.is_some()
+            || self.wifi_identity.is_some()
+            || self.wifi_radio.is_some()
             || self.ip_stack.is_some()
     }
 }
@@ -462,41 +465,56 @@ fn ip_stack_paragraph(ip_stack: Option<netstatus::IpStack>) -> Paragraph<'static
     Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("IP stack"))
 }
 
-fn wifi_paragraph(wifi: Option<&netstatus::WifiStatus>) -> Paragraph<'static> {
-    let Some(wifi) = wifi else {
+/// Wi-Fi status arrives as two independent, independently-paced probes:
+/// `radio` (channel/signal/noise/security/PHY-mode) is fast CoreWLAN, no
+/// shell-out, and typically shows up immediately; `identity` (SSID,
+/// connected-state) is slow `system_profiler`, commonly ~1s. Rendered
+/// separately so radio fields aren't held hostage by the slow SSID lookup.
+fn wifi_paragraph(
+    identity: Option<&netstatus::WifiIdentity>,
+    radio: Option<&netstatus::WifiRadio>,
+) -> Paragraph<'static> {
+    if identity.is_none() && radio.is_none() {
         return Paragraph::new("Collecting...")
             .block(Block::default().borders(Borders::ALL).title("Wi-Fi"));
-    };
-    if !wifi.connected {
+    }
+    if identity.is_some_and(|i| !i.connected) {
         return Paragraph::new("Not connected")
             .block(Block::default().borders(Borders::ALL).title("Wi-Fi"));
     }
 
-    let field = |label: &str, value: &Option<String>| {
+    let field = |label: &str, value: Option<&String>| {
         Line::from(format!(
             "{label}: {}",
-            value.clone().unwrap_or_else(|| "-".to_string())
+            value.cloned().unwrap_or_else(|| "-".to_string())
         ))
     };
 
-    let lines = vec![
-        field("SSID", &wifi.ssid),
-        field("Channel", &wifi.channel),
-        Line::from(format!(
-            "Signal: {}",
-            wifi.signal_dbm
-                .map(|d| format!("{d} dBm"))
-                .unwrap_or_else(|| "-".to_string())
-        )),
-        Line::from(format!(
-            "Noise: {}",
-            wifi.noise_dbm
-                .map(|d| format!("{d} dBm"))
-                .unwrap_or_else(|| "-".to_string())
-        )),
-        field("Security", &wifi.security),
-        field("PHY mode", &wifi.phy_mode),
-    ];
+    let mut lines = vec![match identity {
+        Some(i) => field("SSID", i.ssid.as_ref()),
+        None => Line::from("SSID: collecting..."),
+    }];
+
+    match radio {
+        Some(r) => {
+            lines.push(field("Channel", r.channel.as_ref()));
+            lines.push(Line::from(format!(
+                "Signal: {}",
+                r.signal_dbm
+                    .map(|d| format!("{d} dBm"))
+                    .unwrap_or_else(|| "-".to_string())
+            )));
+            lines.push(Line::from(format!(
+                "Noise: {}",
+                r.noise_dbm
+                    .map(|d| format!("{d} dBm"))
+                    .unwrap_or_else(|| "-".to_string())
+            )));
+            lines.push(field("Security", r.security.as_ref()));
+            lines.push(field("PHY mode", r.phy_mode.as_ref()));
+        }
+        None => lines.push(Line::from("Channel/signal: collecting...")),
+    }
 
     Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Wi-Fi"))
 }
@@ -561,7 +579,7 @@ fn draw(
                         middle[0],
                     );
                     frame.render_widget(proxy_paragraph(status.proxy.as_ref()), middle[1]);
-                    frame.render_widget(wifi_paragraph(status.wifi.as_ref()), right[0]);
+                    frame.render_widget(wifi_paragraph(status.wifi_identity.as_ref(), status.wifi_radio.as_ref()), right[0]);
                     frame.render_widget(ip_stack_paragraph(status.ip_stack), right[1]);
                 }
                 Tab::Dns => {
@@ -604,7 +622,7 @@ fn draw(
                     );
                 }
                 Tab::Wifi => {
-                    frame.render_widget(wifi_paragraph(status.wifi.as_ref()), rows[1]);
+                    frame.render_widget(wifi_paragraph(status.wifi_identity.as_ref(), status.wifi_radio.as_ref()), rows[1]);
                 }
             }
         }

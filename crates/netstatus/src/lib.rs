@@ -29,4 +29,4 @@ pub use status::{
     collect_streaming,
 };
 pub use vpn::{VpnStatus, vpn_status};
-pub use wifi::{WifiStatus, wifi_status};
+pub use wifi::{WifiIdentity, WifiRadio, WifiStatus, wifi_identity, wifi_radio, wifi_status};

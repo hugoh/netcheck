@@ -131,7 +131,9 @@ struct ContentView: View {
         case .dns: dnsTab(status)
         case .reachability: reachabilityTab(status)
         case .wifi:
-            PanelBox(title: "Wi-Fi") { wifiDetail(status.wifi) }
+            PanelBox(title: "Wi-Fi") {
+                wifiDetail(identity: status.wifiIdentity, radio: status.wifiRadio)
+            }
                 .padding(12)
         }
     }
@@ -326,22 +328,35 @@ struct ContentView: View {
         }
     }
 
+    /// Wi-Fi status arrives as two independent, independently-paced probes:
+    /// `radio` (channel/signal/noise/security/PHY-mode) is fast CoreWLAN, no
+    /// shell-out, and typically shows up immediately; `identity` (SSID,
+    /// connected-state) is slow `system_profiler`, commonly ~1s. Rendered
+    /// separately so radio fields aren't held hostage by the slow SSID lookup.
     @ViewBuilder
-    private func wifiDetail(_ wifi: WifiStatus?) -> some View {
-        if let wifi, wifi.connected {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("SSID: \(wifi.ssid ?? "-")")
-                Text("Channel: \(wifi.channel ?? "-")")
-                Text("Signal: \(wifi.signalDbm.map { "\($0) dBm" } ?? "-")")
-                Text("Noise: \(wifi.noiseDbm.map { "\($0) dBm" } ?? "-")")
-                Text("Security: \(wifi.security ?? "-")")
-                Text("PHY mode: \(wifi.phyMode ?? "-")")
-            }
-            .padding(8)
-        } else if wifi != nil {
+    private func wifiDetail(identity: WifiIdentity?, radio: WifiRadio?) -> some View {
+        if identity == nil && radio == nil {
+            CollectingPlaceholder()
+        } else if let identity, !identity.connected {
             Text("Not connected").foregroundStyle(.secondary).padding(8)
         } else {
-            CollectingPlaceholder()
+            VStack(alignment: .leading, spacing: 6) {
+                if let identity {
+                    Text("SSID: \(identity.ssid ?? "-")")
+                } else {
+                    Text("SSID: collecting...")
+                }
+                if let radio {
+                    Text("Channel: \(radio.channel ?? "-")")
+                    Text("Signal: \(radio.signalDbm.map { "\($0) dBm" } ?? "-")")
+                    Text("Noise: \(radio.noiseDbm.map { "\($0) dBm" } ?? "-")")
+                    Text("Security: \(radio.security ?? "-")")
+                    Text("PHY mode: \(radio.phyMode ?? "-")")
+                } else {
+                    Text("Channel/signal: collecting...")
+                }
+            }
+            .padding(8)
         }
     }
 }

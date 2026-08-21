@@ -74,6 +74,21 @@ struct WifiStatus: Codable {
     let phyMode: String?
 }
 
+/// SSID/connected-state, the slow half of Wi-Fi status (system_profiler).
+struct WifiIdentity: Codable {
+    let connected: Bool
+    let ssid: String?
+}
+
+/// Channel/signal/noise/security/PHY-mode, the fast half (CoreWLAN).
+struct WifiRadio: Codable {
+    let channel: String?
+    let signalDbm: Int?
+    let noiseDbm: Int?
+    let security: String?
+    let phyMode: String?
+}
+
 enum IpStack: String, Codable {
     case ipv4Only = "Ipv4Only"
     case ipv6Only = "Ipv6Only"

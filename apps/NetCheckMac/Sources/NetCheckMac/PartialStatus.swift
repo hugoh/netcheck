@@ -27,7 +27,8 @@ struct StatusFieldEnvelope: Decodable {
     let resolution: [ResolutionResult]?
     let domainReachability: [ConnectResult]?
     let proxy: ProxyConfig?
-    let wifi: WifiStatus?
+    let wifiIdentity: WifiIdentity?
+    let wifiRadio: WifiRadio?
     let ipStack: IpStack?
 
     enum CodingKeys: String, CodingKey {
@@ -40,7 +41,8 @@ struct StatusFieldEnvelope: Decodable {
         case resolution = "Resolution"
         case domainReachability = "DomainReachability"
         case proxy = "Proxy"
-        case wifi = "Wifi"
+        case wifiIdentity = "WifiIdentity"
+        case wifiRadio = "WifiRadio"
         case ipStack = "IpStack"
     }
 }
@@ -59,13 +61,15 @@ struct PartialNetworkStatus {
     var resolution: [ResolutionResult]?
     var domainReachability: [ConnectResult]?
     var proxy: ProxyConfig?
-    var wifi: WifiStatus?
+    var wifiIdentity: WifiIdentity?
+    var wifiRadio: WifiRadio?
     var ipStack: IpStack?
 
     var hasAny: Bool {
         interfaces != nil || vpn != nil || resolvers != nil || splitDns != nil
             || reachability != nil || reachabilityV6 != nil || resolution != nil
-            || domainReachability != nil || proxy != nil || wifi != nil || ipStack != nil
+            || domainReachability != nil || proxy != nil || wifiIdentity != nil
+            || wifiRadio != nil || ipStack != nil
     }
 
     mutating func merge(_ envelope: StatusFieldEnvelope) {
@@ -78,7 +82,8 @@ struct PartialNetworkStatus {
         if let v = envelope.resolution { resolution = v }
         if let v = envelope.domainReachability { domainReachability = v }
         if let v = envelope.proxy { proxy = v }
-        if let v = envelope.wifi { wifi = v }
+        if let v = envelope.wifiIdentity { wifiIdentity = v }
+        if let v = envelope.wifiRadio { wifiRadio = v }
         if let v = envelope.ipStack { ipStack = v }
     }
 }

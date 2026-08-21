@@ -49,7 +49,8 @@ struct PartialStatus {
     resolution: Option<Vec<netstatus::ResolutionResult>>,
     domain_reachability: Option<Vec<netstatus::ConnectResult>>,
     proxy: Option<netstatus::ProxyConfig>,
-    wifi: Option<netstatus::WifiStatus>,
+    wifi_identity: Option<netstatus::WifiIdentity>,
+    wifi_radio: Option<netstatus::WifiRadio>,
     ip_stack: Option<netstatus::IpStack>,
 }
 
@@ -65,7 +66,8 @@ impl PartialStatus {
             StatusField::Resolution(v) => self.resolution = Some(v),
             StatusField::DomainReachability(v) => self.domain_reachability = Some(v),
             StatusField::Proxy(v) => self.proxy = Some(v),
-            StatusField::Wifi(v) => self.wifi = Some(v),
+            StatusField::WifiIdentity(v) => self.wifi_identity = Some(v),
+            StatusField::WifiRadio(v) => self.wifi_radio = Some(v),
             StatusField::IpStack(v) => self.ip_stack = Some(v),
         }
     }
@@ -80,7 +82,8 @@ impl PartialStatus {
             || self.resolution.is_some()
             || self.domain_reachability.is_some()
             || self.proxy.is_some()
-            || self.wifi.is_some()
+            || self.wifi_identity.is_some()
+            || self.wifi_radio.is_some()
             || self.ip_stack.is_some()
     }
 }
@@ -378,43 +381,64 @@ fn proxy_panel(ui: &mut egui::Ui, proxy: Option<&netstatus::ProxyConfig>) {
     }
 }
 
-fn wifi_panel(ui: &mut egui::Ui, wifi: Option<&netstatus::WifiStatus>) {
-    let Some(wifi) = wifi else {
+/// Wi-Fi status arrives as two independent, independently-paced probes:
+/// `radio` (channel/signal/noise/security/PHY-mode) is fast CoreWLAN, no
+/// shell-out, and typically shows up immediately; `identity` (SSID,
+/// connected-state) is slow `system_profiler`, commonly ~1s. Rendered
+/// separately so radio fields aren't held hostage by the slow SSID lookup.
+fn wifi_panel(
+    ui: &mut egui::Ui,
+    identity: Option<&netstatus::WifiIdentity>,
+    radio: Option<&netstatus::WifiRadio>,
+) {
+    if identity.is_none() && radio.is_none() {
         ui.label("Collecting...");
         return;
-    };
-    if !wifi.connected {
+    }
+    if identity.is_some_and(|i| !i.connected) {
         ui.label("Not connected");
         return;
     }
-    ui.label(format!(
-        "SSID: {}",
-        wifi.ssid.clone().unwrap_or_else(|| "-".into())
-    ));
-    ui.label(format!(
-        "Channel: {}",
-        wifi.channel.clone().unwrap_or_else(|| "-".into())
-    ));
-    ui.label(format!(
-        "Signal: {}",
-        wifi.signal_dbm
-            .map(|d| format!("{d} dBm"))
-            .unwrap_or_else(|| "-".into())
-    ));
-    ui.label(format!(
-        "Noise: {}",
-        wifi.noise_dbm
-            .map(|d| format!("{d} dBm"))
-            .unwrap_or_else(|| "-".into())
-    ));
-    ui.label(format!(
-        "Security: {}",
-        wifi.security.clone().unwrap_or_else(|| "-".into())
-    ));
-    ui.label(format!(
-        "PHY mode: {}",
-        wifi.phy_mode.clone().unwrap_or_else(|| "-".into())
-    ));
+
+    match identity {
+        Some(i) => ui.label(format!(
+            "SSID: {}",
+            i.ssid.clone().unwrap_or_else(|| "-".into())
+        )),
+        None => ui.label("SSID: collecting..."),
+    };
+
+    match radio {
+        Some(r) => {
+            ui.label(format!(
+                "Channel: {}",
+                r.channel.clone().unwrap_or_else(|| "-".into())
+            ));
+            ui.label(format!(
+                "Signal: {}",
+                r.signal_dbm
+                    .map(|d| format!("{d} dBm"))
+                    .unwrap_or_else(|| "-".into())
+            ));
+            ui.label(format!(
+                "Noise: {}",
+                r.noise_dbm
+                    .map(|d| format!("{d} dBm"))
+                    .unwrap_or_else(|| "-".into())
+            ));
+            ui.label(format!(
+                "Security: {}",
+                r.security.clone().unwrap_or_else(|| "-".into())
+            ));
+            ui.label(format!(
+                "PHY mode: {}",
+                r.phy_mode.clone().unwrap_or_else(|| "-".into())
+            ));
+        }
+        None => {
+            ui.label("Channel/signal: collecting...");
+        }
+    }
 }
 
 fn ip_stack_label(ip_stack: Option<netstatus::IpStack>) -> &'static str {
@@ -609,7 +633,11 @@ impl eframe::App for App {
                                     });
                                     strip.cell(|ui| {
                                         panel(ui, "Wi-Fi", |ui| {
-                                            wifi_panel(ui, status.wifi.as_ref())
+                                            wifi_panel(
+                                                ui,
+                                                status.wifi_identity.as_ref(),
+                                                status.wifi_radio.as_ref(),
+                                            )
                                         });
                                     });
                                     strip.cell(|ui| {
@@ -665,7 +693,13 @@ impl eframe::App for App {
                     });
             }
             Tab::Wifi => {
-                panel(ui, "Wi-Fi", |ui| wifi_panel(ui, status.wifi.as_ref()));
+                panel(ui, "Wi-Fi", |ui| {
+                    wifi_panel(
+                        ui,
+                        status.wifi_identity.as_ref(),
+                        status.wifi_radio.as_ref(),
+                    )
+                });
             }
         });
     }
