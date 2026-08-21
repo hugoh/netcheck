@@ -6,3 +6,4 @@ edition.workspace = true
 [dependencies]
 netdev = "0.46"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.151"

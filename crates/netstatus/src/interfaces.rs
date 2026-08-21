@@ -32,6 +32,11 @@ pub(crate) fn build_interface(raw: RawInterface) -> Interface {
     }
 }
 
+pub(crate) fn is_link_local(address: &str) -> bool {
+    let host = address.split('/').next().unwrap_or(address);
+    host.to_ascii_lowercase().starts_with("fe80:")
+}
+
 /// Returns the status of every network interface on the host.
 pub fn list_interfaces() -> Vec<Interface> {
     netdev::get_interfaces()

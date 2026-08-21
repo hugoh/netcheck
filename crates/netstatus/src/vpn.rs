@@ -1,4 +1,4 @@
-use crate::interfaces::Interface;
+use crate::interfaces::{Interface, is_link_local};
 use serde::Serialize;
 use std::process::Command;
 
@@ -14,11 +14,6 @@ pub struct VpnStatus {
 
 fn is_tunnel_interface(name: &str) -> bool {
     name.starts_with("utun") || name.starts_with("ppp") || name.starts_with("tun")
-}
-
-fn is_link_local(address: &str) -> bool {
-    let host = address.split('/').next().unwrap_or(address);
-    host.to_ascii_lowercase().starts_with("fe80:")
 }
 
 fn has_routable_address(interface: &Interface) -> bool {
