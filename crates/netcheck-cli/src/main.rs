@@ -1,7 +1,14 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "netcheck", about = "Holistic view of macOS network status")]
+#[command(
+    name = "netcheck",
+    about = "Holistic view of macOS network status",
+    long_about = "Holistic view of macOS network status.\n\n\
+        Every subcommand prints JSON to stdout, except `stream`, which \
+        prints NDJSON (one JSON object per line, as each field becomes \
+        ready) instead of a single blocking snapshot."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
