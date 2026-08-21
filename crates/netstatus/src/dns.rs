@@ -56,7 +56,10 @@ pub fn vpn_scoped_domains(resolvers: &[Resolver]) -> Vec<String> {
         if !r.scoped || !r.if_name.as_deref().is_some_and(|n| n.starts_with("utun")) {
             continue;
         }
-        if let Some(domain) = r.domain.clone().or_else(|| r.search_domains.first().cloned())
+        if let Some(domain) = r
+            .domain
+            .clone()
+            .or_else(|| r.search_domains.first().cloned())
             && !domains.contains(&domain)
         {
             domains.push(domain);

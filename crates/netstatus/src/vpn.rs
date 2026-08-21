@@ -48,7 +48,11 @@ pub(crate) fn classify_tunnels(
         primary_interface: primary.map(str::to_string),
         connected,
         split_tunnel,
-        routed_subnets: if connected { routed_subnets } else { Vec::new() },
+        routed_subnets: if connected {
+            routed_subnets
+        } else {
+            Vec::new()
+        },
     }
 }
 
@@ -188,22 +192,14 @@ mod tests {
             iface("en0", true, &["192.168.1.42/24"]),
             iface("utun3", true, &["10.10.0.5/24"]),
         ];
-        let status = classify_tunnels(
-            &interfaces,
-            Some("en0"),
-            vec!["10.223.36.41/8".to_string()],
-        );
+        let status = classify_tunnels(&interfaces, Some("en0"), vec!["10.223.36.41/8".to_string()]);
         assert_eq!(status.routed_subnets, vec!["10.223.36.41/8".to_string()]);
     }
 
     #[test]
     fn routed_subnets_cleared_when_not_connected() {
         let interfaces = vec![iface("en0", true, &["192.168.1.42/24"])];
-        let status = classify_tunnels(
-            &interfaces,
-            Some("en0"),
-            vec!["10.223.36.41/8".to_string()],
-        );
+        let status = classify_tunnels(&interfaces, Some("en0"), vec!["10.223.36.41/8".to_string()]);
         assert!(status.routed_subnets.is_empty());
     }
 

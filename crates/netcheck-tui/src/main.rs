@@ -207,7 +207,7 @@ fn interfaces_list(interfaces: Option<&[netstatus::Interface]>) -> List<'static>
                 };
                 ListItem::new(Line::from(vec![
                     Span::styled(
-                        format!("{:<8}", i.name),
+                        format!("{:<8} ", i.name),
                         Style::default().add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(label, Style::default().fg(color)),
@@ -324,7 +324,7 @@ fn dns_list(resolvers: Option<&[netstatus::Resolver]>) -> List<'static> {
                     Color::Red
                 };
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("{label:<20}"), Style::default().fg(color)),
+                    Span::styled(format!("{label:<20} "), Style::default().fg(color)),
                     Span::raw(format!("{:<10} ", scope)),
                     Span::raw(r.nameservers.join(", ")),
                 ]))
@@ -352,7 +352,7 @@ fn ping_list(title: &'static str, results: &[netstatus::PingResult]) -> List<'st
                 .map(|ms| format!("{ms:.1} ms"))
                 .unwrap_or_else(|| "timeout".to_string());
             ListItem::new(Line::from(vec![
-                Span::styled(format!("{:<20}", p.target), Style::default().fg(color)),
+                Span::styled(format!("{:<20} ", p.target), Style::default().fg(color)),
                 Span::raw(rtt),
             ]))
         })
@@ -401,7 +401,7 @@ fn resolution_list(resolution: Option<&[netstatus::ResolutionResult]>) -> List<'
                     "failed".to_string()
                 };
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("{:<20}", r.domain), Style::default().fg(color)),
+                    Span::styled(format!("{:<20} ", r.domain), Style::default().fg(color)),
                     Span::raw(detail),
                 ]))
             })

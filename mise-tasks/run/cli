@@ -3,7 +3,7 @@
 set -euo pipefail
 
 if [ "$#" -eq 0 ]; then
-    set -- status
+	set -- status
 fi
 
 cargo run -p netcheck-cli -- "$@"
