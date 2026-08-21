@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
+#MISE description="Build apps/NetCheckMac in release mode, wrap it in a signed .app bundle with the netcheck CLI embedded"
+#MISE depends=["build:cli-release"]
 set -euo pipefail
 
-# Builds apps/NetCheckMac in release mode and wraps it in a standard macOS
-# .app bundle, same purpose as bundle-macos.sh but for the SwiftUI app.
+# Same purpose as bundle:macos but for the SwiftUI app. Embeds the netcheck
+# CLI binary next to the app executable so StatusFetcher's bundle-relative
+# lookup finds it without relying on PATH or a relative-to-cwd guess — a
+# double-clicked .app has neither.
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SWIFT_DIR="$ROOT_DIR/apps/NetCheckMac"
 APP_NAME="NetCheckMac"
 BUNDLE_ID="net.hugoh.netcheckmac"
@@ -24,6 +28,7 @@ rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 cp "$BUILD_DIR/$APP_NAME" "$MACOS_DIR/$APP_NAME"
+cp "$ROOT_DIR/target/release/netcheck" "$MACOS_DIR/netcheck"
 
 cat >"$CONTENTS_DIR/Info.plist" <<INFOPLIST
 <?xml version="1.0" encoding="UTF-8"?>

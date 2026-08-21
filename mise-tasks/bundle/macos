@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
+#MISE description="Build netcheck-gui in release mode and wrap it in a signed .app bundle"
+#MISE depends=["build:gui-release"]
 set -euo pipefail
 
 # Builds netcheck-gui in release mode and wraps it in a standard macOS .app
 # bundle so it can be double-clicked, added to the Dock/Applications, etc.
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 APP_NAME="NetCheck"
 BUNDLE_ID="net.hugoh.netcheck"
 VERSION="$(cd "$ROOT_DIR" && cargo metadata --no-deps --format-version=1 |
@@ -15,9 +17,6 @@ APP_DIR="$ROOT_DIR/target/${APP_NAME}.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
-
-echo "Building netcheck-gui (release)..."
-cargo build --release -p netcheck-gui --manifest-path "$ROOT_DIR/Cargo.toml"
 
 echo "Assembling $APP_DIR..."
 rm -rf "$APP_DIR"

@@ -76,7 +76,7 @@ jobs:
         env:
           NETCHECK_VERSION: ${{ steps.tag.outputs.version }}
         run: |
-          ./scripts/bundle-swiftui.sh
+          mise run bundle:swiftui
           mkdir -p dist
           ditto -c -k --sequesterRsrc --keepParent \
             target/NetCheckMac.app "dist/NetCheckMac-${NETCHECK_VERSION}.zip"
@@ -94,6 +94,6 @@ jobs:
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
           VERSION: ${{ steps.tag.outputs.version }}
         run: |
-          ./scripts/update-homebrew-tap.sh "${VERSION}" \
+          mise run release:homebrew-tap -- "${VERSION}" \
             "dist/netcheck-${VERSION}-aarch64-apple-darwin.tar.gz" \
             "dist/NetCheckMac-${VERSION}.zip"

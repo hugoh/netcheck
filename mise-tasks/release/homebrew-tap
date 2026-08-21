@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+#MISE description="Publish/update the netcheck and netcheckmac Homebrew Casks"
 set -euo pipefail
 
 # Publishes/updates the "netcheck" and "netcheckmac" Homebrew Casks in
@@ -6,7 +7,7 @@ set -euo pipefail
 # fleet's casks) since GoReleaser doesn't build Rust/Swift, but follows the
 # same on_macos/on_arm block structure as the existing casks there.
 #
-# Usage: update-homebrew-tap.sh <version-without-v> <cli-tarball> <netcheckmac-zip>
+# Usage: mise run release:homebrew-tap -- <version-without-v> <cli-tarball> <netcheckmac-zip>
 # Requires TAP_GITHUB_TOKEN in the environment.
 
 VERSION="$1"

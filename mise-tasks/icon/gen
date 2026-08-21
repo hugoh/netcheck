@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
+#MISE description="Generate assets/icon-1024.png and assets/AppIcon.icns from scripts/gen_icon.swift"
 set -euo pipefail
 
 # Generates assets/icon-1024.png (used as the window/dock icon at runtime)
-# and assets/AppIcon.icns (used by scripts/bundle-macos.sh) from a small
-# AppKit-drawn icon — no external tools or network access required.
+# and assets/AppIcon.icns (used by bundle:macos and bundle:swiftui) from a
+# small AppKit-drawn icon — no external tools or network access required.
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ASSETS_DIR="$ROOT_DIR/assets"
 ICONSET_DIR="$ROOT_DIR/target/AppIcon.iconset"
 

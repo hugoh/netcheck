@@ -70,11 +70,15 @@ cargo run -p netcheck-tui
 cargo run -p netcheck-gui
 
 # build+sign a release .app bundle, then launch it
-./scripts/bundle-macos.sh
+mise run bundle:macos
 open target/NetCheck.app
 
 # the native SwiftUI app (r refresh, a toggle auto-refresh)
 cd apps/NetCheckMac && swift run -c release
+
+# or: build dev versions of every binary, including a working NetCheckMac.app
+mise run build:dev
+open target/dev-app/NetCheckMac.app
 ```
 
 ## Status

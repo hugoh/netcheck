@@ -15,3 +15,27 @@ shellcheck = "0.11.0"
 "aqua:anordal/shellharden" = "4.3.2"
 shfmt = "3.13.1"
 cocogitto = "7.0.0"
+
+[tasks."build:cli"]
+description = "Build a dev netcheck-cli binary"
+run = "cargo build -p netcheck-cli"
+
+[tasks."build:tui"]
+description = "Build a dev netcheck-tui binary"
+run = "cargo build -p netcheck-tui"
+
+[tasks."build:gui"]
+description = "Build a dev netcheck-gui binary"
+run = "cargo build -p netcheck-gui"
+
+[tasks."build:cli-release"]
+description = "Build a release netcheck-cli binary"
+run = "cargo build --release -p netcheck-cli"
+
+[tasks."build:gui-release"]
+description = "Build a release netcheck-gui binary"
+run = "cargo build --release -p netcheck-gui"
+
+[tasks."build:dev"]
+description = "Build dev versions of every binary: CLI, TUI, GUI, and the macOS app"
+depends = ["build:cli", "build:tui", "build:gui", "build:app"]

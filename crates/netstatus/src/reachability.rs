@@ -34,7 +34,7 @@ fn ping_via_icmp(addr: IpAddr) -> Option<Duration> {
 }
 
 /// Pings `target` once with a 1 second timeout. `target` must be a literal
-/// IPv4 or IPv6 address; an unparseable target is reported as unreachable.
+/// IPv4 or IPv6 address; an unparsable target is reported as unreachable.
 pub fn ping(target: &str) -> PingResult {
     let rtt = target.parse::<IpAddr>().ok().and_then(ping_via_icmp);
 
@@ -61,7 +61,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unparseable_target_is_reported_unreachable() {
+    fn unparsable_target_is_reported_unreachable() {
         let result = ping("not-an-ip-address");
         assert_eq!(
             result,

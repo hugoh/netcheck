@@ -74,10 +74,17 @@ struct ContentView: View {
     private func statusGrid(_ status: NetworkStatus) -> some View {
         HStack(alignment: .top, spacing: 12) {
             PanelBox(title: "Interfaces") {
-                List(status.interfaces.filter { !$0.loopback }) { iface in
+                List(
+                    status.interfaces
+                        .filter { !$0.loopback }
+                        .sorted { classify($0) < classify($1) }
+                ) { iface in
+                    let cls = classify(iface)
                     HStack {
-                        StatusIcon(ok: iface.up)
                         Text(iface.name).font(.system(.body, design: .monospaced))
+                        Text(cls.label)
+                            .font(.caption)
+                            .foregroundStyle(cls.color)
                         Spacer()
                         Text(iface.addresses.isEmpty ? "—" : iface.addresses.joined(separator: ", "))
                             .foregroundStyle(.secondary)

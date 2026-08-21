@@ -77,6 +77,14 @@ final class StatusFetcher: ObservableObject {
             return URL(fileURLWithPath: envPath)
         }
 
+        if let bundled = Bundle.main.executableURL?
+            .deletingLastPathComponent()
+            .appendingPathComponent("netcheck"),
+            fm.fileExists(atPath: bundled.path)
+        {
+            return bundled
+        }
+
         let candidates = [
             "target/release/netcheck",
             "target/debug/netcheck",
