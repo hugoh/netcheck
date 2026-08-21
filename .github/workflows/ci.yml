@@ -49,6 +49,10 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Cargo test
         run: cargo test --workspace
+      - name: Cargo deny
+        run: cargo deny check
+      - name: Cargo audit
+        run: cargo audit
       - name: Swift build
         working-directory: apps/NetCheckMac
         run: swift build -c release
