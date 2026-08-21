@@ -1,7 +1,10 @@
+use crate::sc_store::{Dict, cf_string, cf_string_array, get_dict};
 use serde::Serialize;
-use std::process::Command;
+use std::ffi::CString;
+use system_configuration::dynamic_store::{SCDynamicStore, SCDynamicStoreBuilder};
+use system_configuration::network_reachability::{ReachabilityFlags, SCNetworkReachability};
 
-/// A single resolver block from `scutil --dns`.
+/// A single resolver configuration, one per network service.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Resolver {
     pub domain: Option<String>,
@@ -13,76 +16,26 @@ pub struct Resolver {
     pub reachable: bool,
 }
 
-pub(crate) fn parse_scutil_dns(text: &str) -> Vec<Resolver> {
-    let mut resolvers = Vec::new();
-    let mut scoped = false;
-    let mut current: Option<Resolver> = None;
-
-    for line in text.lines() {
-        let trimmed = line.trim();
-
-        if trimmed.starts_with("DNS configuration (for scoped queries)") {
-            scoped = true;
-            continue;
-        }
-
-        if trimmed.starts_with("resolver #") {
-            if let Some(r) = current.take() {
-                resolvers.push(r);
-            }
-            current = Some(Resolver {
-                domain: None,
-                search_domains: Vec::new(),
-                nameservers: Vec::new(),
-                if_index: None,
-                if_name: None,
-                scoped,
-                reachable: false,
-            });
-            continue;
-        }
-
-        let Some(resolver) = current.as_mut() else {
-            continue;
-        };
-
-        if let Some(value) = field_value(trimmed, "domain") {
-            resolver.domain = Some(value.to_string());
-        } else if trimmed.starts_with("search domain[") {
-            if let Some(value) = trimmed.split(':').nth(1) {
-                resolver.search_domains.push(value.trim().to_string());
-            }
-        } else if trimmed.starts_with("nameserver[") {
-            if let Some(value) = trimmed.split(':').nth(1) {
-                resolver.nameservers.push(value.trim().to_string());
-            }
-        } else if let Some(value) = field_value(trimmed, "if_index") {
-            // Format: "11 (en0)"
-            let mut parts = value.splitn(2, ' ');
-            if let Some(idx) = parts.next().and_then(|s| s.parse::<u32>().ok()) {
-                resolver.if_index = Some(idx);
-            }
-            if let Some(name) = parts.next() {
-                resolver.if_name = Some(name.trim_matches(|c| c == '(' || c == ')').to_string());
-            }
-        } else if let Some(value) = field_value(trimmed, "reach") {
-            resolver.reachable = value.contains("Reachable") && !value.contains("Not Reachable");
-        }
-    }
-
-    if let Some(r) = current.take() {
-        resolvers.push(r);
-    }
-
-    resolvers
-}
-
-fn field_value<'a>(line: &'a str, field: &str) -> Option<&'a str> {
-    let (name, value) = line.split_once(':')?;
-    if name.trim() == field {
-        Some(value.trim())
-    } else {
-        None
+/// Builds a `Resolver` from a service's DNS dictionary
+/// (`State:/Network/Service/<id>/DNS`) plus the interface/scope/reachability
+/// data gathered separately (this function stays pure and testable; the
+/// dynamic-store and reachability lookups that produce its arguments live
+/// in `list_resolvers`).
+pub(crate) fn build_resolver(
+    dns_dict: &Dict,
+    if_name: Option<String>,
+    if_index: Option<u32>,
+    scoped: bool,
+    reachable: bool,
+) -> Resolver {
+    Resolver {
+        domain: cf_string(dns_dict, "DomainName"),
+        search_domains: cf_string_array(dns_dict, "SearchDomains"),
+        nameservers: cf_string_array(dns_dict, "ServerAddresses"),
+        if_index,
+        if_name,
+        scoped,
+        reachable,
     }
 }
 
@@ -94,91 +47,179 @@ pub fn has_split_dns(resolvers: &[Resolver]) -> bool {
         .any(|r| r.scoped && r.if_name.as_deref().is_some_and(|n| n.starts_with("utun")))
 }
 
-/// Runs `scutil --dns` and parses the result.
+fn interface_name_for_service(store: &SCDynamicStore, dns_key: &str) -> Option<String> {
+    let ipv4_key = dns_key.replace("/DNS", "/IPv4");
+    if let Some(dict) = get_dict(store, &ipv4_key)
+        && let Some(name) = cf_string(&dict, "InterfaceName")
+    {
+        return Some(name);
+    }
+    let ipv6_key = dns_key.replace("/DNS", "/IPv6");
+    get_dict(store, &ipv6_key).and_then(|dict| cf_string(&dict, "InterfaceName"))
+}
+
+fn interface_index(name: &str) -> Option<u32> {
+    let c_name = CString::new(name).ok()?;
+    let idx = unsafe { libc::if_nametoindex(c_name.as_ptr()) };
+    (idx != 0).then_some(idx)
+}
+
+fn is_reachable(nameservers: &[String]) -> bool {
+    let Some(first) = nameservers.first() else {
+        return false;
+    };
+    let Ok(c_addr) = CString::new(first.as_str()) else {
+        return false;
+    };
+    SCNetworkReachability::from_host(&c_addr)
+        .and_then(|r| r.reachability().ok())
+        .is_some_and(|flags| flags.contains(ReachabilityFlags::REACHABLE))
+}
+
+/// Every network service's DNS configuration is scoped to that service's own
+/// interface (mirroring `scutil --dns`'s "for scoped queries" section); the
+/// service currently backing the default route (`PrimaryService`) is also
+/// emitted a second time as the unscoped, systemwide-default resolver.
+///
+/// This is a from-scratch derivation from `SCDynamicStore`, not a byte-exact
+/// reproduction of `scutil --dns`'s merged/ordered/mDNS-aware output — it
+/// omits secondary system resolvers (e.g. the `.local` mDNS entry) that
+/// `dns_configuration_copy()` (a private SPI `scutil` uses internally, with
+/// no public equivalent) injects. For netcheck's purpose — resolver
+/// visibility and split-DNS detection — this is sufficient.
 pub fn list_resolvers() -> Vec<Resolver> {
-    let output = Command::new("scutil")
-        .arg("--dns")
-        .output()
-        .expect("scutil --dns should be runnable on macOS");
-    let text = String::from_utf8_lossy(&output.stdout);
-    parse_scutil_dns(&text)
+    let Some(store) = SCDynamicStoreBuilder::new("netcheck-dns").build() else {
+        return Vec::new();
+    };
+
+    let primary_service = get_dict(&store, "State:/Network/Global/IPv4")
+        .and_then(|dict| cf_string(&dict, "PrimaryService"));
+
+    let Some(keys) = store.get_keys("State:/Network/Service/.*/DNS") else {
+        return Vec::new();
+    };
+
+    let mut resolvers = Vec::new();
+    for key in keys.iter() {
+        let key_str = key.to_string();
+        let Some(dns_dict) = get_dict(&store, &key_str) else {
+            continue;
+        };
+        let nameservers = cf_string_array(&dns_dict, "ServerAddresses");
+        let if_name = interface_name_for_service(&store, &key_str);
+        let if_index = if_name.as_deref().and_then(interface_index);
+        let reachable = is_reachable(&nameservers);
+
+        let is_primary = primary_service
+            .as_deref()
+            .is_some_and(|p| key_str.contains(&format!("/Service/{p}/")));
+
+        resolvers.push(build_resolver(
+            &dns_dict,
+            if_name.clone(),
+            if_index,
+            true,
+            reachable,
+        ));
+
+        if is_primary {
+            resolvers.push(build_resolver(&dns_dict, None, None, false, reachable));
+        }
+    }
+
+    resolvers
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core_foundation::array::CFArray;
+    use core_foundation::base::{CFType, TCFType};
+    use core_foundation::dictionary::CFDictionary;
+    use core_foundation::string::CFString;
 
-    const SAMPLE: &str = r#"
-DNS configuration
-
-resolver #1
-  search domain[0] : lan
-  nameserver[0] : 9.9.9.9
-  flags    : Request A records, Request AAAA records
-  reach    : 0x00000002 (Reachable)
-
-resolver #2
-  domain   : local
-  options  : mdns
-  timeout  : 5
-  flags    : Request A records, Request AAAA records
-  reach    : 0x00000000 (Not Reachable)
-  order    : 300000
-
-DNS configuration (for scoped queries)
-
-resolver #1
-  search domain[0] : lan
-  nameserver[0] : 9.9.9.9
-  if_index : 11 (en0)
-  flags    : Scoped, Request A records, Request AAAA records
-  reach    : 0x00000002 (Reachable)
-
-resolver #2
-  domain   : corp.example.com
-  nameserver[0] : 10.10.10.10
-  if_index : 20 (utun3)
-  flags    : Scoped, Request A records, Request AAAA records
-  reach    : 0x00000002 (Reachable)
-"#;
-
-    #[test]
-    fn parses_unscoped_and_scoped_resolvers() {
-        let resolvers = parse_scutil_dns(SAMPLE);
-        assert_eq!(resolvers.len(), 4);
-
-        assert_eq!(resolvers[0].search_domains, vec!["lan".to_string()]);
-        assert_eq!(resolvers[0].nameservers, vec!["9.9.9.9".to_string()]);
-        assert!(!resolvers[0].scoped);
-        assert!(resolvers[0].reachable);
-
-        assert_eq!(resolvers[1].domain, Some("local".to_string()));
-        assert!(!resolvers[1].reachable);
+    fn dns_dict(domain: Option<&str>, search: &[&str], servers: &[&str]) -> Dict {
+        let mut pairs: Vec<(CFString, CFType)> = Vec::new();
+        if let Some(d) = domain {
+            pairs.push((CFString::from("DomainName"), CFString::from(d).as_CFType()));
+        }
+        let search_arr = CFArray::from_CFTypes(
+            &search
+                .iter()
+                .map(|s| CFString::from(*s))
+                .collect::<Vec<_>>(),
+        );
+        pairs.push((CFString::from("SearchDomains"), search_arr.as_CFType()));
+        let servers_arr = CFArray::from_CFTypes(
+            &servers
+                .iter()
+                .map(|s| CFString::from(*s))
+                .collect::<Vec<_>>(),
+        );
+        pairs.push((CFString::from("ServerAddresses"), servers_arr.as_CFType()));
+        CFDictionary::from_CFType_pairs(&pairs)
     }
 
     #[test]
-    fn parses_scoped_resolver_with_if_index() {
-        let resolvers = parse_scutil_dns(SAMPLE);
-        let vpn_resolver = &resolvers[3];
+    fn builds_scoped_resolver_from_dns_dict() {
+        let dict = dns_dict(Some("corp.example.com"), &["lan"], &["10.10.10.10"]);
+        let r = build_resolver(&dict, Some("utun3".to_string()), Some(20), true, true);
 
-        assert!(vpn_resolver.scoped);
-        assert_eq!(vpn_resolver.domain, Some("corp.example.com".to_string()));
-        assert_eq!(vpn_resolver.if_index, Some(20));
-        assert_eq!(vpn_resolver.if_name, Some("utun3".to_string()));
+        assert_eq!(r.domain, Some("corp.example.com".to_string()));
+        assert_eq!(r.search_domains, vec!["lan".to_string()]);
+        assert_eq!(r.nameservers, vec!["10.10.10.10".to_string()]);
+        assert_eq!(r.if_name, Some("utun3".to_string()));
+        assert_eq!(r.if_index, Some(20));
+        assert!(r.scoped);
+        assert!(r.reachable);
+    }
+
+    #[test]
+    fn builds_unscoped_resolver_with_no_interface() {
+        let dict = dns_dict(None, &[], &["9.9.9.9"]);
+        let r = build_resolver(&dict, None, None, false, true);
+
+        assert!(!r.scoped);
+        assert_eq!(r.if_name, None);
+        assert_eq!(r.if_index, None);
     }
 
     #[test]
     fn detects_split_dns_via_vpn_tunnel() {
-        let resolvers = parse_scutil_dns(SAMPLE);
+        let resolvers = vec![
+            Resolver {
+                domain: None,
+                search_domains: vec![],
+                nameservers: vec!["9.9.9.9".to_string()],
+                if_index: Some(11),
+                if_name: Some("en0".to_string()),
+                scoped: true,
+                reachable: true,
+            },
+            Resolver {
+                domain: Some("corp.example.com".to_string()),
+                search_domains: vec![],
+                nameservers: vec!["10.10.10.10".to_string()],
+                if_index: Some(20),
+                if_name: Some("utun3".to_string()),
+                scoped: true,
+                reachable: true,
+            },
+        ];
         assert!(has_split_dns(&resolvers));
     }
 
     #[test]
     fn no_split_dns_when_no_scoped_tunnel_resolver() {
-        let resolvers: Vec<Resolver> = parse_scutil_dns(SAMPLE)
-            .into_iter()
-            .filter(|r| r.if_name.as_deref() != Some("utun3"))
-            .collect();
+        let resolvers = vec![Resolver {
+            domain: None,
+            search_domains: vec![],
+            nameservers: vec!["9.9.9.9".to_string()],
+            if_index: Some(11),
+            if_name: Some("en0".to_string()),
+            scoped: true,
+            reachable: true,
+        }];
         assert!(!has_split_dns(&resolvers));
     }
 }

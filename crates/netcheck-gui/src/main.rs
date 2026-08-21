@@ -253,7 +253,10 @@ fn dns_resolvers_table(ui: &mut egui::Ui, resolvers: Option<&[netstatus::Resolve
         .column(Column::auto().at_least(50.0))
         .column(Column::remainder())
         .body(|body| {
-            let rows: Vec<_> = resolvers.iter().filter(|r| !r.nameservers.is_empty()).collect();
+            let rows: Vec<_> = resolvers
+                .iter()
+                .filter(|r| !r.nameservers.is_empty())
+                .collect();
             body.rows(18.0, rows.len(), |mut row| {
                 let r = rows[row.index()];
                 let label = r
@@ -493,10 +496,7 @@ impl eframe::App for App {
                                     });
                                     strip.cell(|ui| {
                                         panel(ui, "Interface detail", |ui| {
-                                            interface_detail_panel(
-                                                ui,
-                                                status.interfaces.as_deref(),
-                                            )
+                                            interface_detail_panel(ui, status.interfaces.as_deref())
                                         });
                                     });
                                 });

@@ -1,11 +1,11 @@
 use core_foundation::array::CFArray;
 use core_foundation::base::{CFType, FromVoid};
 use core_foundation::boolean::CFBoolean;
-use std::ffi::c_void;
 use core_foundation::dictionary::CFDictionary;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
 use serde::Serialize;
+use std::ffi::c_void;
 use system_configuration::dynamic_store::SCDynamicStoreBuilder;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Default)]
@@ -128,10 +128,7 @@ mod tests {
         let d = dict(&[
             ("HTTPEnable", CFBoolean::from(true).as_CFType()),
             ("HTTPPort", CFNumber::from(8080).as_CFType()),
-            (
-                "HTTPProxy",
-                CFString::from("proxy.example.com").as_CFType(),
-            ),
+            ("HTTPProxy", CFString::from("proxy.example.com").as_CFType()),
         ]);
         let config = proxy_config_from_dict(&d);
         assert!(config.http.enabled);

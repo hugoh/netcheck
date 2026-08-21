@@ -223,8 +223,12 @@ fn interface_detail_list(interfaces: Option<&[netstatus::Interface]>) -> List<'s
                         .map(|addr| {
                             let (tag, color) = match netstatus::classify_address(addr) {
                                 netstatus::AddressClass::LinkLocal => ("link-local", Color::Yellow),
-                                netstatus::AddressClass::RoutableV4 => ("routable v4", Color::Green),
-                                netstatus::AddressClass::RoutableV6 => ("routable v6", Color::Green),
+                                netstatus::AddressClass::RoutableV4 => {
+                                    ("routable v4", Color::Green)
+                                }
+                                netstatus::AddressClass::RoutableV6 => {
+                                    ("routable v6", Color::Green)
+                                }
                             };
                             ListItem::new(Line::from(vec![
                                 Span::raw(format!("  {addr:<28}")),

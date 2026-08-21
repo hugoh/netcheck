@@ -1,7 +1,5 @@
 use crate::interfaces::{Interface, is_link_local};
-use core_foundation::base::{CFType, TCFType};
-use core_foundation::dictionary::CFDictionary;
-use core_foundation::string::CFString;
+use crate::sc_store::{cf_string, get_dict};
 use serde::Serialize;
 use system_configuration::dynamic_store::SCDynamicStoreBuilder;
 
@@ -28,13 +26,8 @@ fn has_routable_address(interface: &Interface) -> bool {
 /// `scutil --nwi` derives and prints as its "Network interfaces:" trailer.
 fn primary_interface_from_store() -> Option<String> {
     let store = SCDynamicStoreBuilder::new("netcheck-vpn").build()?;
-    let value = store.get("State:/Network/Global/IPv4")?;
-    let opaque: CFDictionary = value.downcast_into()?;
-    let dict: CFDictionary<CFString, CFType> =
-        unsafe { CFDictionary::wrap_under_get_rule(opaque.as_concrete_TypeRef()) };
-    dict.find(CFString::from("PrimaryInterface"))
-        .and_then(|v| v.downcast::<CFString>())
-        .map(|s| s.to_string())
+    let dict = get_dict(&store, "State:/Network/Global/IPv4")?;
+    cf_string(&dict, "PrimaryInterface")
 }
 
 pub(crate) fn classify_tunnels(interfaces: &[Interface], primary: Option<&str>) -> VpnStatus {

@@ -2562,6 +2562,7 @@ name = "netstatus"
 version = "0.1.0"
 dependencies = [
  "core-foundation 0.10.1",
+ "libc",
  "netdev",
  "serde",
  "serde_json",

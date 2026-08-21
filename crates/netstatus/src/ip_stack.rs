@@ -49,21 +49,13 @@ mod tests {
 
     #[test]
     fn dual_stack_when_both_families_present() {
-        let interfaces = vec![iface(
-            "en0",
-            true,
-            &["192.168.1.42/24", "2001:db8::1/64"],
-        )];
+        let interfaces = vec![iface("en0", true, &["192.168.1.42/24", "2001:db8::1/64"])];
         assert_eq!(detect_ip_stack(&interfaces), IpStack::DualStack);
     }
 
     #[test]
     fn ipv4_only_when_no_routable_v6() {
-        let interfaces = vec![iface(
-            "en0",
-            true,
-            &["192.168.1.42/24", "fe80::1/64"],
-        )];
+        let interfaces = vec![iface("en0", true, &["192.168.1.42/24", "fe80::1/64"])];
         assert_eq!(detect_ip_stack(&interfaces), IpStack::Ipv4Only);
     }
 
