@@ -42,7 +42,7 @@ cat >"$CONTENTS_DIR/Info.plist" <<INFOPLIST
     <key>CFBundleName</key>
     <string>${APP_NAME}</string>
     <key>CFBundleDisplayName</key>
-    <string>netcheck</string>
+    <string>${APP_NAME}</string>
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}</string>
     <key>CFBundleVersion</key>
@@ -52,7 +52,7 @@ cat >"$CONTENTS_DIR/Info.plist" <<INFOPLIST
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
-    <string>${APP_NAME}</string>
+    <string>${EXE_NAME}</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>
