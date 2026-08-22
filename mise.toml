@@ -97,3 +97,14 @@ description = "Scan Cargo.lock against RustSec advisories"
 run = "cargo audit"
 sources = ["Cargo.lock"]
 outputs = { auto = true }
+
+[tasks."check:swift-test"]
+description = "Run the NetCheck.app Swift test suite"
+run = "swift test --package-path apps/NetCheck"
+sources = [
+  "apps/NetCheck/Package.swift",
+  "apps/NetCheck/Package.resolved",
+  "apps/NetCheck/Sources/**",
+  "apps/NetCheck/Tests/**",
+]
+outputs = { auto = true }

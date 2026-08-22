@@ -32,11 +32,11 @@ jobs:
           fetch-depth: "0"
       - uses: hugoh/gh-workflows/hk-check@e3deb909891d6fc8089311f2e91e85796eb6c725 # v1.9.2
 
-  # Rust checks, on macOS because this project's whole reason to exist is
-  # macOS-specific behavior (scutil, ping, netdev's VPN detection). A Linux
-  # build would only prove it compiles, not that it works. Split from `build`
-  # below so the two run concurrently instead of the Swift build waiting
-  # behind every cargo check.
+  # Rust checks plus the Swift unit tests, on macOS because this project's
+  # whole reason to exist is macOS-specific behavior (scutil, ping, netdev's
+  # VPN detection). A Linux build would only prove it compiles, not that it
+  # works. Split from `build` below so the two run concurrently instead of
+  # the app-bundling step waiting behind every cargo check.
   check:
     runs-on: macos-latest
     timeout-minutes: 30
@@ -60,6 +60,15 @@ jobs:
         run: mise run check:cargo-deny
       - name: Cargo audit
         run: mise run check:cargo-audit
+      - name: Cache Swift build
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+        with:
+          path: apps/NetCheck/.build
+          key: swift-build-${{ runner.os }}-${{ hashFiles('apps/NetCheck/Package.swift', 'apps/NetCheck/Package.resolved', 'apps/NetCheck/Sources/**', 'apps/NetCheck/Tests/**') }}
+          restore-keys: |
+            swift-build-${{ runner.os }}-
+      - name: Swift test
+        run: mise run check:swift-test
 
   # Release build + app bundle. `mise run bundle:swiftui` builds the release
   # netcheck CLI and the SwiftUI app itself (it doesn't reuse anything from
