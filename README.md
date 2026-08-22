@@ -27,8 +27,8 @@ Three ways to get netcheck, in order of ease:
 
 ```sh
 brew tap hugoh/tap
-brew install --cask netcheck       # CLI + TUI + GUI
-brew install --cask netcheckmac    # native SwiftUI app
+brew install netcheck              # CLI + TUI + GUI
+brew install --cask netcheckapp    # native SwiftUI app
 ```
 
 You can install either or both — they're independent.
@@ -41,18 +41,18 @@ Grab the latest release from the
 - `netcheck-<version>-aarch64-apple-darwin.tar.gz` — the `netcheck`,
   `netcheck-tui`, and `netcheck-gui` binaries. Unpack and put them on your
   `PATH`.
-- `NetCheckMac-<version>.zip` — the native app. Unzip and drag
-  `NetCheckMac.app` to `/Applications`.
+- `NetCheck-<version>.zip` — the native app. Unzip and drag
+  `NetCheck.app` to `/Applications`.
 
 Both are Apple Silicon (arm64) only.
 
 > [!NOTE]
-> `NetCheckMac.app` is ad-hoc signed, not notarized with a Developer ID.
+> `NetCheck.app` is ad-hoc signed, not notarized with a Developer ID.
 > The Homebrew cask strips the quarantine attribute on install, so it opens
 > normally. With a direct download, macOS will flag it as from an
 > unidentified developer on first launch — right-click (or Control-click)
 > the app and choose **Open**, or clear it manually:
-> `xattr -cr /Applications/NetCheckMac.app`.
+> `xattr -cr /Applications/NetCheck.app`.
 
 ### From source
 
@@ -60,8 +60,8 @@ Both are Apple Silicon (arm64) only.
 mise run build:cli       # netcheck-cli
 mise run build:tui       # netcheck-tui
 mise run build:gui       # netcheck-gui
-mise run build:app       # dev build of the native NetCheckMac.app
-mise run bundle:swiftui  # signed release .app bundle of NetCheckMac
+mise run build:app       # dev build of the native NetCheck.app
+mise run bundle:swiftui  # signed release .app bundle of NetCheck
 ```
 
 ## The four flavors
@@ -74,10 +74,10 @@ diagnostics core, so pick whichever fits how you want to check your network:
 | **CLI** (`netcheck`) | Scriptable, JSON output, one-shot checks | `netcheck status` |
 | **TUI** (`netcheck-tui`) | Live-refreshing terminal dashboard | `netcheck-tui` |
 | **GUI** (`netcheck-gui`) | Plain cross-platform-style window (egui) — same panels as the TUI, but a resizable window with tabs | `netcheck-gui` |
-| **NetCheckMac.app** | A real native macOS app (SwiftUI/AppKit) — Dark Mode, vibrancy, proper window chrome | open from Applications, or `open /Applications/NetCheckMac.app` |
+| **NetCheck.app** | A real native macOS app (SwiftUI/AppKit) — Dark Mode, vibrancy, proper window chrome | open from Applications, or `open /Applications/NetCheck.app` |
 
 `netcheck-gui` can never look pixel-native on macOS — it draws every widget
-itself rather than using AppKit. NetCheckMac.app is the one that's meant to
+itself rather than using AppKit. NetCheck.app is the one that's meant to
 feel like a Mac app; the GUI is there for the cases (remote/X11, or just
 preference) where a plain window beats either a terminal or a native app.
 

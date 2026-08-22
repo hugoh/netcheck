@@ -51,9 +51,9 @@ description = "Run the netcheck-gui window"
 run = "cargo run -p netcheck-gui"
 
 [tasks."run:app"]
-description = "Build (if needed) and launch the dev NetCheckMac.app"
+description = "Build (if needed) and launch the dev NetCheck.app"
 depends = ["build:app"]
-run = "open target/dev-app/NetCheckMac.app"
+run = "open target/dev-app/NetCheck.app"
 
 [tasks."check:cargo-fmt"]
 description = "Check Rust formatting"
