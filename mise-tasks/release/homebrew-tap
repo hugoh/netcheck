@@ -43,8 +43,6 @@ class Netcheck < Formula
 
   def install
     bin.install "netcheck"
-    bin.install "netcheck-tui"
-    bin.install "netcheck-gui"
   end
 end
 EOF

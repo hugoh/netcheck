@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-#MISE description="Run netcheck-cli (defaults to 'status'; pass another subcommand: mise run run:cli -- wifi)"
+#MISE description="Run a netcheck JSON subcommand (defaults to 'status'; pass another subcommand: mise run run:cli -- wifi)"
 set -euo pipefail
 
 if [ "$#" -eq 0 ]; then
 	set -- status
 fi
 
-cargo run -p netcheck-cli -- "$@"
+cargo run -p netcheck --bin netcheck --features tui -- "$@"

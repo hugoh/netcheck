@@ -1,3 +1,6 @@
+#[cfg(feature = "tui")]
+pub mod tui;
+
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -6,17 +9,18 @@ use clap::{Parser, Subcommand};
     version = netstatus::VERSION,
     about = "Holistic view of macOS network status",
     long_about = "Holistic view of macOS network status.\n\n\
-        Every subcommand prints JSON to stdout, except `stream`, which \
-        prints NDJSON (one JSON object per line, as each field becomes \
-        ready) instead of a single blocking snapshot."
+        Run with no subcommand for the interactive dashboard. Every \
+        subcommand prints JSON to stdout, except `stream`, which prints \
+        NDJSON (one JSON object per line, as each field becomes ready) \
+        instead of a single blocking snapshot."
 )]
-struct Cli {
+pub struct Cli {
     #[command(subcommand)]
-    command: Command,
+    pub command: Option<Command>,
 }
 
 #[derive(Subcommand)]
-enum Command {
+pub enum Command {
     /// Print a full network status snapshot as JSON
     Status,
     /// Stream each status field as NDJSON (one JSON object per line), as
@@ -58,10 +62,9 @@ fn print_json<T: serde::Serialize>(value: &T) {
     );
 }
 
-fn main() {
-    let cli = Cli::parse();
-
-    match cli.command {
+/// Runs a JSON subcommand to completion, printing its result to stdout.
+pub fn run_command(command: Command) {
+    match command {
         Command::Status => print_json(&netstatus::collect()),
         Command::Stream => {
             use std::io::Write;

@@ -27,7 +27,7 @@ Three ways to get netcheck, in order of ease:
 
 ```sh
 brew tap hugoh/tap
-brew install netcheck              # CLI + TUI + GUI
+brew install netcheck              # netcheck binary
 brew install --cask netcheck       # native SwiftUI app
 ```
 
@@ -38,9 +38,8 @@ You can install either or both — they're independent.
 Grab the latest release from the
 [Releases page](https://github.com/hugoh/netcheck/releases):
 
-- `netcheck-<version>-aarch64-apple-darwin.tar.gz` — the `netcheck`,
-  `netcheck-tui`, and `netcheck-gui` binaries. Unpack and put them on your
-  `PATH`.
+- `netcheck-<version>-aarch64-apple-darwin.tar.gz` — the `netcheck` binary.
+  Unpack and put it on your `PATH`.
 - `NetCheck-<version>.zip` — the native app. Unzip and drag
   `NetCheck.app` to `/Applications`.
 
@@ -57,28 +56,23 @@ Both are Apple Silicon (arm64) only.
 ### From source
 
 ```sh
-mise run build:cli       # netcheck-cli
-mise run build:tui       # netcheck-tui
-mise run build:gui       # netcheck-gui
+mise run build:netcheck  # netcheck
 mise run build:app       # dev build of the native NetCheck.app
 mise run bundle:swiftui  # signed release .app bundle of NetCheck
 ```
 
-## The four flavors
+## The two flavors
 
-netcheck ships as four separate front ends, all built on the same
-diagnostics core, so pick whichever fits how you want to check your network:
+netcheck ships as two front ends, both built on the same diagnostics core:
 
 | | What it is | Run it |
 |---|---|---|
-| **CLI** (`netcheck`) | Scriptable, JSON output | `netcheck status` |
-| **TUI** (`netcheck-tui`) | Terminal dashboard | `netcheck-tui` |
-| **GUI** (`netcheck-gui`) | Cross-platform window | `netcheck-gui` |
+| **`netcheck`** | Interactive dashboard by default, JSON with a subcommand | `netcheck` / `netcheck status` |
 | **NetCheck.app** | Native macOS app | open from Applications, or `open /Applications/NetCheck.app` |
 
 ## Screenshots
 
-**CLI** — `netcheck vpn`
+**JSON** — `netcheck vpn`
 
 ```json
 {
@@ -90,7 +84,7 @@ diagnostics core, so pick whichever fits how you want to check your network:
 }
 ```
 
-**TUI** — `netcheck-tui`
+**Dashboard** — `netcheck`
 
 ```text
  Overview   DNS   Reachability   Wi-Fi
@@ -110,10 +104,6 @@ diagnostics core, so pick whichever fits how you want to check your network:
 q: quit   r: refresh now   a: auto-refresh (off)   1-4: tabs   updated 0s ago   netcheck dev-396365d
 ```
 
-**GUI** (`netcheck-gui`)
-
-![netcheck-gui screenshot](assets/screenshots/netcheck-gui.png)
-
 **NetCheck.app**:
 
 ![NetCheck.app screenshot](assets/screenshots/netcheck-app.png)
@@ -121,6 +111,7 @@ q: quit   r: refresh now   a: auto-refresh (off)   1-4: tabs   updated 0s ago   
 ## Usage
 
 ```sh
+netcheck                                     # interactive dashboard
 netcheck status                              # full snapshot as JSON
 netcheck interfaces
 netcheck dns
@@ -129,16 +120,12 @@ netcheck ping 1.1.1.1 8.8.8.8
 netcheck resolve google.com github.com
 netcheck connect amazon.com microsoft.com --port 443
 
-# live terminal dashboard: q quit, r refresh, a toggle auto-refresh
-netcheck-tui
-
-# native-style window: same q/r/a keys, [1]-[4] to switch tabs
-netcheck-gui
+# dashboard keys: q quit, r refresh, a toggle auto-refresh, 1-4 switch tabs
 ```
 
-The native app, the TUI, and the GUI all auto-refresh every 5 seconds
-(off by default in the GUI/native app — toggle with `a`); the CLI runs on
-demand and is meant for scripting/piping into `jq`.
+The native app and the dashboard both auto-refresh every 5 seconds (off by
+default — toggle with `a` in the dashboard); subcommands run on demand and
+are meant for scripting/piping into `jq`.
 
 NetCheck.app uses Cmd-modified shortcuts instead — `q` to quit, `⌘R` to
 refresh, `⌘A` to toggle auto-refresh, `⌘1`-`⌘4` to switch tabs — shown in

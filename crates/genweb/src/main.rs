@@ -100,7 +100,7 @@ fn render_page(description: &str, body: &str) -> String {
 <nav class="topnav">
 <a class="brand" href="#">{SITE_NAME}</a>
 <a href="#install">Install</a>
-<a href="#the-four-flavors">The four flavors</a>
+<a href="#the-two-flavors">The two flavors</a>
 <a href="#screenshots">Screenshots</a>
 <a href="#usage">Usage</a>
 <a href="{REPO_URL}">GitHub</a>

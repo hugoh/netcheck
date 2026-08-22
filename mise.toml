@@ -18,50 +18,40 @@ cocogitto = "7.0.0"
 "aqua:EmbarkStudios/cargo-deny" = "0.20.2"
 "aqua:rustsec/rustsec/cargo-audit" = "0.22.2"
 
-[tasks."build:cli"]
-description = "Build a netcheck-cli binary (pass --release for a release build)"
-run = "cargo build -p netcheck-cli"
+[tasks."build:netcheck"]
+description = "Build the full netcheck binary (dashboard + JSON subcommands; pass --release for a release build)"
+run = "cargo build -p netcheck --bin netcheck --features tui"
 
-[tasks."build:tui"]
-description = "Build a netcheck-tui binary (pass --release for a release build)"
-run = "cargo build -p netcheck-tui"
-
-[tasks."build:gui"]
-description = "Build a netcheck-gui binary (pass --release for a release build)"
-run = "cargo build -p netcheck-gui"
+[tasks."build:netcheck-core"]
+description = "Build the slim netcheck-core binary (JSON subcommands only, no TUI deps — used by NetCheck.app; pass --release for a release build)"
+run = "cargo build -p netcheck --bin netcheck-core"
 
 [tasks."build:dev"]
-description = "Build dev versions of every binary: CLI, TUI, GUI, and the macOS app"
-depends = ["build:cli", "build:tui", "build:gui", "build:app"]
+description = "Build dev versions of every binary: netcheck, netcheck-core, and the macOS app"
+depends = ["build:netcheck", "build:netcheck-core", "build:app"]
 
-[tasks."build:cli-release"]
-description = "Build a release, --locked netcheck-cli binary"
-depends = ["build:cli --release --locked"]
+[tasks."build:netcheck-release"]
+description = "Build a release, --locked netcheck binary"
+depends = ["build:netcheck --release --locked"]
 
-[tasks."build:tui-release"]
-description = "Build a release, --locked netcheck-tui binary"
-depends = ["build:tui --release --locked"]
-
-[tasks."build:gui-release"]
-description = "Build a release, --locked netcheck-gui binary"
-depends = ["build:gui --release --locked"]
+[tasks."build:netcheck-core-release"]
+description = "Build a release, --locked netcheck-core binary"
+depends = ["build:netcheck-core --release --locked"]
 
 [tasks."build:release"]
-# A single --workspace invocation, not build:{cli,tui,gui}-release fanned
-# out: separate `-p` invocations don't share Cargo's unit graph, so each one
-# recompiles netstatus (and other shared deps) from scratch — 3x the work
-# for no real parallelism, since they all serialize on the same target/ lock
-# anyway.
-description = "Build release, --locked binaries for CLI, TUI, and GUI"
-run = "cargo build --release --workspace --locked"
+# Two separate invocations, not one combined --workspace build: netcheck and
+# netcheck-core have genuinely different feature sets (tui on/off), so unlike
+# the old CLI/TUI/GUI split (three crates, identical features, worth sharing
+# one unit graph) there's no shared work to lose here — and building
+# netcheck-core in its own invocation, with the tui feature never requested,
+# guarantees ratatui/crossterm aren't even compiled into its dependency
+# graph, not just dead-code-eliminated from the link.
+description = "Build release, --locked binaries for netcheck and netcheck-core"
+depends = ["build:netcheck-release", "build:netcheck-core-release"]
 
-[tasks."run:tui"]
-description = "Run the netcheck-tui dashboard"
-run = "cargo run -p netcheck-tui"
-
-[tasks."run:gui"]
-description = "Run the netcheck-gui window"
-run = "cargo run -p netcheck-gui"
+[tasks."run:netcheck"]
+description = "Run the netcheck dashboard"
+run = "cargo run -p netcheck --bin netcheck --features tui"
 
 [tasks."run:app"]
 description = "Build (if needed) and launch the dev NetCheck.app"
@@ -82,7 +72,7 @@ outputs = { auto = true }
 
 [tasks."check:cargo-test"]
 description = "Run the Rust test suite"
-run = "cargo test --workspace"
+run = "cargo test --workspace --all-features"
 sources = ["**/*.rs", "**/Cargo.toml", "Cargo.lock"]
 outputs = { auto = true }
 

@@ -600,7 +600,8 @@ fn draw(
     Ok(())
 }
 
-fn main() -> io::Result<()> {
+/// Runs the interactive dashboard until the user quits.
+pub fn run() -> io::Result<()> {
     let mut terminal = setup_terminal()?;
     let auto_refresh = Arc::new(AtomicBool::new(false));
     let (rx, manual_tx) = spawn_workers(auto_refresh.clone());

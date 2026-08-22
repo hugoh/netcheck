@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-#MISE description="Build a working NetCheck.app (dev) with the netcheck CLI embedded"
-#MISE depends=["build:cli"]
+#MISE description="Build a working NetCheck.app (dev) with the netcheck-core binary embedded"
+#MISE depends=["build:netcheck-core"]
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -24,7 +24,7 @@ rm -rf "$APP"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 cp "$ROOT_DIR/apps/NetCheck/.build/debug/NetCheckApp" "$MACOS_DIR/NetCheckApp"
-cp "$ROOT_DIR/target/debug/netcheck" "$MACOS_DIR/netcheck"
+cp "$ROOT_DIR/target/debug/netcheck-core" "$MACOS_DIR/netcheck"
 cp "$ROOT_DIR/assets/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 
 cat >"$CONTENTS_DIR/Info.plist" <<INFOPLIST
