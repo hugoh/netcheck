@@ -23,7 +23,13 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Full history, not the default depth-1: pull_request events check out
+      # a synthetic merge commit, and with a shallow/grafted fetch its true
+      # parent count isn't visible to libgit2, so cog can't recognize it as
+      # a merge commit and cog.toml's ignore_merge_commits doesn't apply.
       - uses: hugoh/gh-workflows/setup@e3deb909891d6fc8089311f2e91e85796eb6c725 # v1.9.2
+        with:
+          fetch-depth: "0"
       - uses: hugoh/gh-workflows/hk-check@e3deb909891d6fc8089311f2e91e85796eb6c725 # v1.9.2
 
   # The real build/test, on macOS because this project's whole reason to
@@ -39,6 +45,7 @@ jobs:
       contents: read
     steps:
       - uses: hugoh/gh-workflows/setup@e3deb909891d6fc8089311f2e91e85796eb6c725 # v1.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Ensure rustfmt/clippy components
         run: rustup component add rustfmt clippy
       - name: Cargo build
@@ -54,10 +61,10 @@ jobs:
       - name: Cargo audit
         run: mise run check:cargo-audit
       - name: Swift build
-        working-directory: apps/NetCheckMac
+        working-directory: apps/NetCheck
         run: swift build -c release
-      - name: Bundle netcheck-gui.app
-        run: ./scripts/bundle-macos.sh
+      - name: Bundle NetCheck.app
+        run: mise run bundle:swiftui
       - name: Upload NetCheck.app
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

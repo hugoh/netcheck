@@ -74,7 +74,7 @@ jobs:
           tar -czf "dist/netcheck-${TAG#v}-aarch64-apple-darwin.tar.gz" \
             -C target/release netcheck netcheck-tui netcheck-gui
 
-      - name: Build & bundle NetCheckMac.app
+      - name: Build & bundle NetCheck.app
         if: steps.tag.outputs.skip != 'true'
         env:
           NETCHECK_VERSION: ${{ steps.tag.outputs.version }}
@@ -82,7 +82,7 @@ jobs:
           mise run bundle:swiftui
           mkdir -p dist
           ditto -c -k --sequesterRsrc --keepParent \
-            target/NetCheckMac.app "dist/NetCheckMac-${NETCHECK_VERSION}.zip"
+            target/NetCheck.app "dist/NetCheck-${NETCHECK_VERSION}.zip"
 
       - name: Create GitHub release
         if: steps.tag.outputs.skip != 'true'
@@ -99,4 +99,4 @@ jobs:
         run: |
           mise run release:homebrew-tap -- "${VERSION}" \
             "dist/netcheck-${VERSION}-aarch64-apple-darwin.tar.gz" \
-            "dist/NetCheckMac-${VERSION}.zip"
+            "dist/NetCheck-${VERSION}.zip"

@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct NetCheckMacApp: App {
+struct NetCheckApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var fetcher = StatusFetcher()
 

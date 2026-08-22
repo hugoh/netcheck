@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "NetCheckMac",
+    name: "NetCheck",
     platforms: [.macOS(.v13)],
     targets: [
         .executableTarget(
-            name: "NetCheckMac",
-            path: "Sources/NetCheckMac"
+            name: "NetCheckApp",
+            path: "Sources/NetCheckApp"
         )
     ]
 )

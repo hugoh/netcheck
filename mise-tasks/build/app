@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-#MISE description="Build a working NetCheckMac.app (dev) with the netcheck CLI embedded"
+#MISE description="Build a working NetCheck.app (dev) with the netcheck CLI embedded"
 #MISE depends=["build:cli"]
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-APP="$ROOT_DIR/target/dev-app/NetCheckMac.app"
+APP="$ROOT_DIR/target/dev-app/NetCheck.app"
 CONTENTS_DIR="$APP/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
@@ -18,12 +18,12 @@ if [ "$VERSION" = "" ]; then
 	VERSION="${VERSION:-dev}"
 fi
 
-(cd "$ROOT_DIR/apps/NetCheckMac" && swift build)
+(cd "$ROOT_DIR/apps/NetCheck" && swift build)
 
 rm -rf "$APP"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
-cp "$ROOT_DIR/apps/NetCheckMac/.build/debug/NetCheckMac" "$MACOS_DIR/NetCheckMac"
+cp "$ROOT_DIR/apps/NetCheck/.build/debug/NetCheckApp" "$MACOS_DIR/NetCheckApp"
 cp "$ROOT_DIR/target/debug/netcheck" "$MACOS_DIR/netcheck"
 cp "$ROOT_DIR/assets/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 
@@ -33,11 +33,11 @@ cat >"$CONTENTS_DIR/Info.plist" <<INFOPLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>NetCheckMac</string>
+    <string>NetCheckApp</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <string>net.hugoh.netcheckmac.dev</string>
+    <string>net.larve.netcheck.dev</string>
     <key>CFBundleName</key>
     <string>netcheck (dev)</string>
     <key>CFBundlePackageType</key>
