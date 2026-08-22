@@ -10,6 +10,18 @@ struct StatusIcon: View {
     }
 }
 
+/// Like `StatusIcon`, but for conditions that are optional rather than
+/// expected to always be met — no VPN connected isn't a failure, so it's
+/// shown neutral rather than as a red X.
+struct OptionalStatusIcon: View {
+    let on: Bool
+
+    var body: some View {
+        Image(systemName: on ? "checkmark.circle.fill" : "minus.circle")
+            .foregroundStyle(on ? .green : .secondary)
+    }
+}
+
 struct PanelBox<Content: View>: View {
     let title: String
     @ViewBuilder var content: Content
@@ -180,7 +192,7 @@ struct ContentView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Primary interface: \(vpn.primaryInterface ?? "unknown")")
                             HStack {
-                                StatusIcon(ok: vpn.connected)
+                                OptionalStatusIcon(on: vpn.connected)
                                 Text("VPN connected: \(vpn.connected ? "yes" : "no")")
                             }
                             Text("Split tunnel: \(vpn.splitTunnel ? "yes" : "no")")
