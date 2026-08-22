@@ -1,3 +1,4 @@
 /target
 .build/
 /site/screenshots/
+/site/index.html

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Capture window screenshots of netcheck-gui and NetCheck.app into assets/screenshots"
+#MISE description="Capture a window screenshot of NetCheck.app into assets/screenshots"
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -70,5 +70,4 @@ APPLESCRIPT
 	echo "Wrote $OUT_DIR/$out_name.png"
 }
 
-capture_app "netcheck-gui" "netcheck-gui"
 capture_app "NetCheckApp" "netcheck-app"
