@@ -69,7 +69,7 @@ jobs:
           TAG: ${{ steps.tag.outputs.tag }}
           NETCHECK_VERSION: ${{ steps.tag.outputs.version }}
         run: |
-          cargo build --release --workspace --locked
+          mise run build:release
           mkdir -p dist
           tar -czf "dist/netcheck-${TAG#v}-aarch64-apple-darwin.tar.gz" \
             -C target/release netcheck netcheck-tui netcheck-gui
