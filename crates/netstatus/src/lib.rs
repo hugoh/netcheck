@@ -1,3 +1,4 @@
+mod concurrent;
 mod connect;
 mod dns;
 mod interfaces;

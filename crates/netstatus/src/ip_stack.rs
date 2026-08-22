@@ -37,15 +37,7 @@ pub fn detect_ip_stack(interfaces: &[Interface]) -> IpStack {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn iface(name: &str, up: bool, addresses: &[&str]) -> Interface {
-        Interface {
-            name: name.to_string(),
-            up,
-            loopback: false,
-            addresses: addresses.iter().map(|s| s.to_string()).collect(),
-        }
-    }
+    use crate::interfaces::test_iface as iface;
 
     #[test]
     fn dual_stack_when_both_families_present() {

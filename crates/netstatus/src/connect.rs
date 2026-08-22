@@ -1,3 +1,4 @@
+use crate::concurrent::map_all;
 use serde::Serialize;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
@@ -42,13 +43,7 @@ pub fn connect(target: &str, port: u16) -> ConnectResult {
 
 /// Connects to each target concurrently and returns results in the same order.
 pub fn connect_all(targets: &[&str], port: u16) -> Vec<ConnectResult> {
-    std::thread::scope(|scope| {
-        let handles: Vec<_> = targets
-            .iter()
-            .map(|target| scope.spawn(move || connect(target, port)))
-            .collect();
-        handles.into_iter().map(|h| h.join().unwrap()).collect()
-    })
+    map_all(targets, |target| connect(target, port))
 }
 
 #[cfg(test)]

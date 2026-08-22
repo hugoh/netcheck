@@ -1,3 +1,4 @@
+use crate::concurrent::map_all;
 use serde::Serialize;
 use std::io;
 use std::net::{IpAddr, ToSocketAddrs};
@@ -55,13 +56,7 @@ pub fn resolve(domain: &str) -> ResolutionResult {
 
 /// Resolves each domain concurrently and returns results in the same order.
 pub fn resolve_all(domains: &[&str]) -> Vec<ResolutionResult> {
-    std::thread::scope(|scope| {
-        let handles: Vec<_> = domains
-            .iter()
-            .map(|domain| scope.spawn(move || resolve(domain)))
-            .collect();
-        handles.into_iter().map(|h| h.join().unwrap()).collect()
-    })
+    map_all(domains, resolve)
 }
 
 #[cfg(test)]
