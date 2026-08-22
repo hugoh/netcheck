@@ -70,30 +70,33 @@ struct ContentView: View {
     }
 
     var body: some View {
-        Group {
-            if fetcher.status.hasAny {
-                tabbedContent(fetcher.status)
-            } else if let error = fetcher.errorMessage {
-                VStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.largeTitle)
-                        .foregroundStyle(.orange)
-                    Text(error).multilineTextAlignment(.center).padding()
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ProgressView("Collecting network status...")
+        VStack(spacing: 0) {
+            Group {
+                if fetcher.status.hasAny {
+                    tabbedContent(fetcher.status)
+                } else if let error = fetcher.errorMessage {
+                    VStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.largeTitle)
+                            .foregroundStyle(.orange)
+                        Text(error).multilineTextAlignment(.center).padding()
+                    }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ProgressView("Collecting network status...")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
+            .frame(maxHeight: .infinity)
+
+            Divider()
+            footer
         }
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Text(Self.appVersion).foregroundStyle(.secondary)
-            }
             ToolbarItem {
                 Picker("", selection: $activeTab) {
                     ForEach(Tab.allCases, id: \.self) { tab in
-                        Text("[⌘\(tab.rawValue)] \(tab.label)").tag(tab)
+                        Text("\(tab.label)  ⌘\(tab.rawValue)").tag(tab)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -102,26 +105,39 @@ struct ContentView: View {
                 Button {
                     fetcher.refresh()
                 } label: {
-                    Label("Refresh  [⌘R]", systemImage: "arrow.clockwise")
+                    Label {
+                        Text("Refresh  ") + Text("⌘R").foregroundColor(.gray)
+                    } icon: {
+                        Image(systemName: "arrow.clockwise")
+                    }
                 }
                 .keyboardShortcut("r", modifiers: [.command])
-            }
-            ToolbarItem {
-                Toggle(
-                    "Auto-refresh  [⌘A]",
-                    isOn: Binding(get: { fetcher.autoRefreshEnabled }, set: { _ in fetcher.toggleAutoRefresh() })
-                )
-                .keyboardShortcut("a", modifiers: [.command])
-            }
-            ToolbarItem {
-                if let updated = fetcher.lastUpdated {
-                    Text("Updated \(updated, style: .relative) ago")
-                        .foregroundStyle(.secondary)
-                }
             }
         }
         .background(tabKeyShortcuts)
         .background(quitKeyShortcut)
+    }
+
+    private var footer: some View {
+        HStack(spacing: 12) {
+            Text(Self.appVersion)
+                .foregroundStyle(.secondary)
+
+            Spacer()
+
+            Toggle(isOn: Binding(get: { fetcher.autoRefreshEnabled }, set: { _ in fetcher.toggleAutoRefresh() })) {
+                Text("Auto-refresh  ") + Text("⌘A").foregroundColor(.gray)
+            }
+            .keyboardShortcut("a", modifiers: [.command])
+
+            if let updated = fetcher.lastUpdated {
+                Text("Updated \(updated, style: .relative) ago")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .font(.callout)
     }
 
     /// Hidden buttons carrying keyboard shortcuts Cmd+1-4, echoing
