@@ -47,8 +47,13 @@ description = "Build a release, --locked netcheck-gui binary"
 depends = ["build:gui --release --locked"]
 
 [tasks."build:release"]
+# A single --workspace invocation, not build:{cli,tui,gui}-release fanned
+# out: separate `-p` invocations don't share Cargo's unit graph, so each one
+# recompiles netstatus (and other shared deps) from scratch — 3x the work
+# for no real parallelism, since they all serialize on the same target/ lock
+# anyway.
 description = "Build release, --locked binaries for CLI, TUI, and GUI"
-depends = ["build:cli-release", "build:tui-release", "build:gui-release"]
+run = "cargo build --release --workspace --locked"
 
 [tasks."run:tui"]
 description = "Run the netcheck-tui dashboard"
