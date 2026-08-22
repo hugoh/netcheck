@@ -1,0 +1,8 @@
+[package]
+name = "genweb"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[dependencies]
+comrak = { version = "0.54.0", default-features = false }

@@ -5,8 +5,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# site/index.html and site/style.css are hand-written and checked in; the
-# screenshots are generated separately (mise run screenshot:apps) and kept
-# out of git to avoid duplicating the copies already under assets/.
+# site/index.html is generated from README.md by the genweb crate, so the two
+# can't drift; site/style.css is hand-written and checked in. Screenshots are
+# generated separately (mise run screenshot:apps) and kept out of git to
+# avoid duplicating the copies already under assets/.
+(cd "$ROOT_DIR" && cargo run -p genweb --release)
+
 mkdir -p "$ROOT_DIR/site/screenshots"
 cp "$ROOT_DIR/assets/screenshots/"*.png "$ROOT_DIR/site/screenshots/"
