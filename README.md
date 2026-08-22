@@ -71,15 +71,10 @@ diagnostics core, so pick whichever fits how you want to check your network:
 
 | | What it is | Run it |
 |---|---|---|
-| **CLI** (`netcheck`) | Scriptable, JSON output, one-shot checks | `netcheck status` |
-| **TUI** (`netcheck-tui`) | Live-refreshing terminal dashboard | `netcheck-tui` |
-| **GUI** (`netcheck-gui`) | Plain cross-platform-style window (egui) — same panels as the TUI, but a resizable window with tabs | `netcheck-gui` |
-| **NetCheck.app** | A real native macOS app (SwiftUI/AppKit) — Dark Mode, vibrancy, proper window chrome | open from Applications, or `open /Applications/NetCheck.app` |
-
-`netcheck-gui` can never look pixel-native on macOS — it draws every widget
-itself rather than using AppKit. NetCheck.app is the one that's meant to
-feel like a Mac app; the GUI is there for the cases (remote/X11, or just
-preference) where a plain window beats either a terminal or a native app.
+| **CLI** (`netcheck`) | Scriptable, JSON output | `netcheck status` |
+| **TUI** (`netcheck-tui`) | Terminal dashboard | `netcheck-tui` |
+| **GUI** (`netcheck-gui`) | Cross-platform window | `netcheck-gui` |
+| **NetCheck.app** | Native macOS app | open from Applications, or `open /Applications/NetCheck.app` |
 
 ## Screenshots
 
