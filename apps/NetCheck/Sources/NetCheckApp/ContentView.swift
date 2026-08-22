@@ -70,33 +70,33 @@ struct ContentView: View {
     }
 
     var body: some View {
-        Group {
-            if fetcher.status.hasAny {
-                tabbedContent(fetcher.status)
-            } else if let error = fetcher.errorMessage {
-                VStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.largeTitle)
-                        .foregroundStyle(.orange)
-                    Text(error).multilineTextAlignment(.center).padding()
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ProgressView("Collecting network status...")
+        VStack(spacing: 0) {
+            Group {
+                if fetcher.status.hasAny {
+                    tabbedContent(fetcher.status)
+                } else if let error = fetcher.errorMessage {
+                    VStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.largeTitle)
+                            .foregroundStyle(.orange)
+                        Text(error).multilineTextAlignment(.center).padding()
+                    }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ProgressView("Collecting network status...")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
+            .frame(maxHeight: .infinity)
+
+            Divider()
+            footer
         }
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                HStack(spacing: 6) {
-                    Text("netcheck").font(.headline)
-                    Text(Self.appVersion).foregroundStyle(.secondary)
-                }
-            }
             ToolbarItem {
                 Picker("", selection: $activeTab) {
                     ForEach(Tab.allCases, id: \.self) { tab in
-                        Text("[\(tab.rawValue)] \(tab.label)").tag(tab)
+                        Text("\(tab.label)  ⌘\(tab.rawValue)").tag(tab)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -105,34 +105,47 @@ struct ContentView: View {
                 Button {
                     fetcher.refresh()
                 } label: {
-                    Label("Refresh  [r]", systemImage: "arrow.clockwise")
+                    Label {
+                        Text("Refresh  ") + Text("⌘R").foregroundColor(.gray)
+                    } icon: {
+                        Image(systemName: "arrow.clockwise")
+                    }
                 }
-                .keyboardShortcut("r", modifiers: [])
-            }
-            ToolbarItem {
-                Toggle(
-                    "Auto-refresh  [a]",
-                    isOn: Binding(get: { fetcher.autoRefreshEnabled }, set: { _ in fetcher.toggleAutoRefresh() })
-                )
-                .keyboardShortcut("a", modifiers: [])
-            }
-            ToolbarItem {
-                if let updated = fetcher.lastUpdated {
-                    Text("Updated \(updated, style: .relative) ago")
-                        .foregroundStyle(.secondary)
-                }
+                .keyboardShortcut("r", modifiers: [.command])
             }
         }
         .background(tabKeyShortcuts)
         .background(quitKeyShortcut)
     }
 
-    /// Hidden buttons carrying keyboard shortcuts 1-4, matching
+    private var footer: some View {
+        HStack(spacing: 12) {
+            Text(Self.appVersion)
+                .foregroundStyle(.secondary)
+
+            Spacer()
+
+            Toggle(isOn: Binding(get: { fetcher.autoRefreshEnabled }, set: { _ in fetcher.toggleAutoRefresh() })) {
+                Text("Auto-refresh  ") + Text("⌘A").foregroundColor(.gray)
+            }
+            .keyboardShortcut("a", modifiers: [.command])
+
+            if let updated = fetcher.lastUpdated {
+                Text("Updated \(updated, style: .relative) ago")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .font(.callout)
+    }
+
+    /// Hidden buttons carrying keyboard shortcuts Cmd+1-4, echoing
     /// netcheck-tui/-gui's number-key tab switching.
     private var tabKeyShortcuts: some View {
         ForEach(Tab.allCases, id: \.self) { tab in
             Button("") { activeTab = tab }
-                .keyboardShortcut(KeyEquivalent(Character("\(tab.rawValue)")), modifiers: [])
+                .keyboardShortcut(KeyEquivalent(Character("\(tab.rawValue)")), modifiers: [.command])
                 .opacity(0)
                 .frame(width: 0, height: 0)
         }
