@@ -96,7 +96,7 @@ struct ContentView: View {
             ToolbarItem {
                 Picker("", selection: $activeTab) {
                     ForEach(Tab.allCases, id: \.self) { tab in
-                        Text("[\(tab.rawValue)] \(tab.label)").tag(tab)
+                        Text("[⌘\(tab.rawValue)] \(tab.label)").tag(tab)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -105,16 +105,16 @@ struct ContentView: View {
                 Button {
                     fetcher.refresh()
                 } label: {
-                    Label("Refresh  [r]", systemImage: "arrow.clockwise")
+                    Label("Refresh  [⌘R]", systemImage: "arrow.clockwise")
                 }
-                .keyboardShortcut("r", modifiers: [])
+                .keyboardShortcut("r", modifiers: [.command])
             }
             ToolbarItem {
                 Toggle(
-                    "Auto-refresh  [a]",
+                    "Auto-refresh  [⌘A]",
                     isOn: Binding(get: { fetcher.autoRefreshEnabled }, set: { _ in fetcher.toggleAutoRefresh() })
                 )
-                .keyboardShortcut("a", modifiers: [])
+                .keyboardShortcut("a", modifiers: [.command])
             }
             ToolbarItem {
                 if let updated = fetcher.lastUpdated {
@@ -127,12 +127,12 @@ struct ContentView: View {
         .background(quitKeyShortcut)
     }
 
-    /// Hidden buttons carrying keyboard shortcuts 1-4, matching
+    /// Hidden buttons carrying keyboard shortcuts Cmd+1-4, echoing
     /// netcheck-tui/-gui's number-key tab switching.
     private var tabKeyShortcuts: some View {
         ForEach(Tab.allCases, id: \.self) { tab in
             Button("") { activeTab = tab }
-                .keyboardShortcut(KeyEquivalent(Character("\(tab.rawValue)")), modifiers: [])
+                .keyboardShortcut(KeyEquivalent(Character("\(tab.rawValue)")), modifiers: [.command])
                 .opacity(0)
                 .frame(width: 0, height: 0)
         }
