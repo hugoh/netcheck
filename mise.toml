@@ -34,13 +34,21 @@ run = "cargo build -p netcheck-gui"
 description = "Build dev versions of every binary: CLI, TUI, GUI, and the macOS app"
 depends = ["build:cli", "build:tui", "build:gui", "build:app"]
 
+[tasks."build:cli-release"]
+description = "Build a release, --locked netcheck-cli binary"
+depends = ["build:cli --release --locked"]
+
+[tasks."build:tui-release"]
+description = "Build a release, --locked netcheck-tui binary"
+depends = ["build:tui --release --locked"]
+
+[tasks."build:gui-release"]
+description = "Build a release, --locked netcheck-gui binary"
+depends = ["build:gui --release --locked"]
+
 [tasks."build:release"]
 description = "Build release, --locked binaries for CLI, TUI, and GUI"
-depends = [
-  "build:cli --release --locked",
-  "build:tui --release --locked",
-  "build:gui --release --locked",
-]
+depends = ["build:cli-release", "build:tui-release", "build:gui-release"]
 
 [tasks."run:tui"]
 description = "Run the netcheck-tui dashboard"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Build apps/NetCheck in release mode, wrap it in a signed .app bundle with the netcheck CLI embedded"
-#MISE depends=["build:cli --release --locked"]
+#MISE depends=["build:cli-release"]
 set -euo pipefail
 
 # Wraps the SwiftUI app in a standard macOS .app bundle. Embeds the netcheck
