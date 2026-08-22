@@ -28,7 +28,7 @@ Three ways to get netcheck, in order of ease:
 ```sh
 brew tap hugoh/tap
 brew install netcheck              # CLI + TUI + GUI
-brew install --cask netcheckapp    # native SwiftUI app
+brew install --cask netcheck       # native SwiftUI app
 ```
 
 You can install either or both — they're independent.

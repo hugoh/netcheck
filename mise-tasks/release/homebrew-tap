@@ -1,25 +1,26 @@
 #!/usr/bin/env bash
-#MISE description="Publish/update the netcheck Formula and netcheckapp Cask"
+#MISE description="Publish/update the netcheck Formula and Cask"
 set -euo pipefail
 
-# Publishes/updates the "netcheck" Formula and "netcheckapp" Cask in
+# Publishes/updates the "netcheck" Formula and "netcheck" Cask in
 # hugoh/homebrew-tap. Hand-rolled (not GoReleaser-generated like the Go
 # fleet's casks) since GoReleaser doesn't build Rust/Swift, but follows the
 # same on_macos/on_arm block structure as the existing casks there.
-# netcheck is a Formula (plain CLI binaries) while netcheckapp is a Cask
-# (it installs a .app bundle).
+# netcheck is a Formula (plain CLI binaries) while netcheck is also a Cask
+# (it installs NetCheck.app) — install with `brew install --cask netcheck`
+# to disambiguate.
 #
-# Usage: mise run release:homebrew-tap -- <version-without-v> <cli-tarball> <netcheckapp-zip>
+# Usage: mise run release:homebrew-tap -- <version-without-v> <cli-tarball> <app-zip>
 # Requires TAP_GITHUB_TOKEN in the environment.
 
 VERSION="$1"
 CLI_TARBALL="$2"
-NETCHECKAPP_ZIP="$3"
+APP_ZIP="$3"
 
 : "${TAP_GITHUB_TOKEN:?TAP_GITHUB_TOKEN must be set}"
 
 CLI_SHA="$(shasum -a 256 "$CLI_TARBALL" | cut -d' ' -f1)"
-NETCHECKAPP_SHA="$(shasum -a 256 "$NETCHECKAPP_ZIP" | cut -d' ' -f1)"
+APP_SHA="$(shasum -a 256 "$APP_ZIP" | cut -d' ' -f1)"
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
@@ -48,13 +49,13 @@ class Netcheck < Formula
 end
 EOF
 
-cat >"$WORK_DIR/Casks/netcheckapp.rb" <<EOF
-cask "netcheckapp" do
+cat >"$WORK_DIR/Casks/netcheck.rb" <<EOF
+cask "netcheck" do
   version "${VERSION}"
 
   on_macos do
     on_arm do
-      sha256 "${NETCHECKAPP_SHA}"
+      sha256 "${APP_SHA}"
       url "https://github.com/hugoh/netcheck/releases/download/v#{version}/NetCheck-#{version}.zip"
     end
   end
@@ -83,7 +84,7 @@ EOF
 cd "$WORK_DIR"
 git config user.name "netcheck-release-bot"
 git config user.email "hugoh@hugoh.net"
-git add Formula/netcheck.rb Casks/netcheckapp.rb
+git add Formula/netcheck.rb Casks/netcheck.rb
 if git diff --cached --quiet; then
 	echo "No changes to publish"
 	exit 0
