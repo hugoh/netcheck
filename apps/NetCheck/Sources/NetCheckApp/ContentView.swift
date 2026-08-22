@@ -88,10 +88,7 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
-                HStack(spacing: 6) {
-                    Text("netcheck").font(.headline)
-                    Text(Self.appVersion).foregroundStyle(.secondary)
-                }
+                Text(Self.appVersion).foregroundStyle(.secondary)
             }
             ToolbarItem {
                 Picker("", selection: $activeTab) {

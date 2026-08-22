@@ -6,7 +6,7 @@ struct NetCheckApp: App {
     @StateObject private var fetcher = StatusFetcher()
 
     var body: some Scene {
-        WindowGroup("netcheck") {
+        WindowGroup("NetCheck") {
             ContentView(fetcher: fetcher)
                 .frame(minWidth: 950, minHeight: 560)
         }
