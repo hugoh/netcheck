@@ -19,24 +19,16 @@ cocogitto = "7.0.0"
 "aqua:rustsec/rustsec/cargo-audit" = "0.22.2"
 
 [tasks."build:cli"]
-description = "Build a dev netcheck-cli binary"
+description = "Build a netcheck-cli binary (pass --release for a release build)"
 run = "cargo build -p netcheck-cli"
 
 [tasks."build:tui"]
-description = "Build a dev netcheck-tui binary"
+description = "Build a netcheck-tui binary (pass --release for a release build)"
 run = "cargo build -p netcheck-tui"
 
 [tasks."build:gui"]
-description = "Build a dev netcheck-gui binary"
+description = "Build a netcheck-gui binary (pass --release for a release build)"
 run = "cargo build -p netcheck-gui"
-
-[tasks."build:cli-release"]
-description = "Build a release netcheck-cli binary"
-run = "cargo build --release -p netcheck-cli"
-
-[tasks."build:gui-release"]
-description = "Build a release netcheck-gui binary"
-run = "cargo build --release -p netcheck-gui"
 
 [tasks."build:dev"]
 description = "Build dev versions of every binary: CLI, TUI, GUI, and the macOS app"
