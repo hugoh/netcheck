@@ -97,6 +97,16 @@ pub fn list_interfaces() -> Vec<Interface> {
 }
 
 #[cfg(test)]
+pub(crate) fn test_iface(name: &str, up: bool, addresses: &[&str]) -> Interface {
+    Interface {
+        name: name.to_string(),
+        up,
+        loopback: false,
+        addresses: addresses.iter().map(|s| s.to_string()).collect(),
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

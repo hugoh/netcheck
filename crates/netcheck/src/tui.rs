@@ -151,10 +151,19 @@ fn sorted_non_loopback(interfaces: &[netstatus::Interface]) -> Vec<&netstatus::I
     interfaces
 }
 
-fn interfaces_list(interfaces: Option<&[netstatus::Interface]>) -> List<'static> {
-    let items: Vec<ListItem> = match interfaces {
+fn interface_list_items(
+    interfaces: Option<&[netstatus::Interface]>,
+    render: impl FnOnce(Vec<&netstatus::Interface>) -> Vec<ListItem<'static>>,
+) -> Vec<ListItem<'static>> {
+    match interfaces {
         None => vec![ListItem::new("Collecting...")],
-        Some(interfaces) => sorted_non_loopback(interfaces)
+        Some(interfaces) => render(sorted_non_loopback(interfaces)),
+    }
+}
+
+fn interfaces_list(interfaces: Option<&[netstatus::Interface]>) -> List<'static> {
+    let items = interface_list_items(interfaces, |interfaces| {
+        interfaces
             .into_iter()
             .map(|i| {
                 let (label, color) = interface_class_label(netstatus::classify_interface(i));
@@ -172,15 +181,14 @@ fn interfaces_list(interfaces: Option<&[netstatus::Interface]>) -> List<'static>
                     Span::raw(addrs),
                 ]))
             })
-            .collect(),
-    };
+            .collect()
+    });
     List::new(items).block(Block::default().borders(Borders::ALL).title("Interfaces"))
 }
 
 fn interface_detail_list(interfaces: Option<&[netstatus::Interface]>) -> List<'static> {
-    let items: Vec<ListItem> = match interfaces {
-        None => vec![ListItem::new("Collecting...")],
-        Some(interfaces) => sorted_non_loopback(interfaces)
+    let items = interface_list_items(interfaces, |interfaces| {
+        interfaces
             .into_iter()
             .flat_map(|i| {
                 let header = ListItem::new(Line::from(Span::styled(
@@ -211,8 +219,8 @@ fn interface_detail_list(interfaces: Option<&[netstatus::Interface]>) -> List<'s
                 };
                 std::iter::once(header).chain(addr_lines)
             })
-            .collect(),
-    };
+            .collect()
+    });
     List::new(items).block(
         Block::default()
             .borders(Borders::ALL)

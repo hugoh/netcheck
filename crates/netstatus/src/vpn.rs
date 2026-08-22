@@ -141,15 +141,7 @@ pub fn vpn_status(interfaces: &[Interface]) -> VpnStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn iface(name: &str, up: bool, addresses: &[&str]) -> Interface {
-        Interface {
-            name: name.to_string(),
-            up,
-            loopback: false,
-            addresses: addresses.iter().map(|s| s.to_string()).collect(),
-        }
-    }
+    use crate::interfaces::test_iface as iface;
 
     #[test]
     fn no_vpn_when_utuns_have_no_address() {

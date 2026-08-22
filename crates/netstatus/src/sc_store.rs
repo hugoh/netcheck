@@ -31,35 +31,27 @@ pub(crate) fn cf_string(dict: &Dict, key: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-pub(crate) fn cf_string_array(dict: &Dict, key: &str) -> Vec<String> {
+fn cf_array<T>(dict: &Dict, key: &str, item: impl Fn(*const c_void) -> Option<T>) -> Vec<T> {
     dict.find(CFString::from(key))
         .and_then(|v| v.downcast::<CFArray<*const c_void>>())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|ptr| {
-                    let item = unsafe { CFType::from_void(*ptr) };
-                    item.downcast::<CFString>()
-                })
-                .map(|s| s.to_string())
-                .collect()
-        })
+        .map(|arr| arr.iter().filter_map(|ptr| item(*ptr)).collect())
         .unwrap_or_default()
+}
+
+pub(crate) fn cf_string_array(dict: &Dict, key: &str) -> Vec<String> {
+    cf_array(dict, key, |ptr| {
+        let item = unsafe { CFType::from_void(ptr) };
+        item.downcast::<CFString>().map(|s| s.to_string())
+    })
 }
 
 /// Reads an array-of-dictionaries value (e.g. `AdditionalRoutes`, each
 /// element `{DestinationAddress, SubnetMask}`), reinterpreting each opaque
 /// element the same way `get_dict` reinterprets the top-level value.
 pub(crate) fn cf_dict_array(dict: &Dict, key: &str) -> Vec<Dict> {
-    dict.find(CFString::from(key))
-        .and_then(|v| v.downcast::<CFArray<*const c_void>>())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|ptr| {
-                    let item = unsafe { CFType::from_void(*ptr) };
-                    let opaque: CFDictionary = item.downcast::<CFDictionary>()?;
-                    Some(unsafe { CFDictionary::wrap_under_get_rule(opaque.as_concrete_TypeRef()) })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    cf_array(dict, key, |ptr| {
+        let item = unsafe { CFType::from_void(ptr) };
+        let opaque: CFDictionary = item.downcast::<CFDictionary>()?;
+        Some(unsafe { CFDictionary::wrap_under_get_rule(opaque.as_concrete_TypeRef()) })
+    })
 }

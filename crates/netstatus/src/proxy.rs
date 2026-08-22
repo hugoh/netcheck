@@ -1,11 +1,8 @@
-use core_foundation::array::CFArray;
-use core_foundation::base::{CFType, FromVoid};
+use crate::sc_store::{Dict, cf_string, cf_string_array};
 use core_foundation::boolean::CFBoolean;
-use core_foundation::dictionary::CFDictionary;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
 use serde::Serialize;
-use std::ffi::c_void;
 use system_configuration::dynamic_store::SCDynamicStoreBuilder;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Default)]
@@ -24,22 +21,14 @@ pub struct ProxyConfig {
     pub exceptions: Vec<String>,
 }
 
-type ProxyDict = CFDictionary<CFString, CFType>;
-
-fn cf_bool(dict: &ProxyDict, key: &str) -> bool {
+fn cf_bool(dict: &Dict, key: &str) -> bool {
     dict.find(CFString::from(key))
         .and_then(|v| v.downcast::<CFBoolean>())
         .map(bool::from)
         .unwrap_or(false)
 }
 
-fn cf_string(dict: &ProxyDict, key: &str) -> Option<String> {
-    dict.find(CFString::from(key))
-        .and_then(|v| v.downcast::<CFString>())
-        .map(|s| s.to_string())
-}
-
-fn cf_port(dict: &ProxyDict, key: &str) -> Option<u16> {
+fn cf_port(dict: &Dict, key: &str) -> Option<u16> {
     dict.find(CFString::from(key))
         .and_then(|v| v.downcast::<CFNumber>())
         .and_then(|n| n.to_i32())
@@ -52,26 +41,14 @@ fn cf_port(dict: &ProxyDict, key: &str) -> Option<u16> {
 /// there is no `__SCOPED__`-style nested-block text to misparse — scoped,
 /// per-interface overrides simply aren't present in `get_proxies()`'s
 /// top-level keys at all.
-pub(crate) fn proxy_config_from_dict(dict: &ProxyDict) -> ProxyConfig {
+pub(crate) fn proxy_config_from_dict(dict: &Dict) -> ProxyConfig {
     let endpoint = |enable_key: &str, host_key: &str, port_key: &str| ProxyEndpoint {
         enabled: cf_bool(dict, enable_key),
         host: cf_string(dict, host_key),
         port: cf_port(dict, port_key),
     };
 
-    let exceptions = dict
-        .find(CFString::from("ExceptionsList"))
-        .and_then(|v| v.downcast::<CFArray<*const c_void>>())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|ptr| {
-                    let item = unsafe { CFType::from_void(*ptr) };
-                    item.downcast::<CFString>()
-                })
-                .map(|s| s.to_string())
-                .collect()
-        })
-        .unwrap_or_default();
+    let exceptions = cf_string_array(dict, "ExceptionsList");
 
     ProxyConfig {
         http: endpoint("HTTPEnable", "HTTPProxy", "HTTPPort"),
@@ -102,9 +79,11 @@ pub fn proxy_config() -> ProxyConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_foundation::base::TCFType;
+    use core_foundation::array::CFArray;
+    use core_foundation::base::{CFType, TCFType};
+    use core_foundation::dictionary::CFDictionary;
 
-    fn dict(pairs: &[(&str, CFType)]) -> ProxyDict {
+    fn dict(pairs: &[(&str, CFType)]) -> Dict {
         let pairs: Vec<(CFString, CFType)> = pairs
             .iter()
             .map(|(k, v)| (CFString::from(*k), v.clone()))

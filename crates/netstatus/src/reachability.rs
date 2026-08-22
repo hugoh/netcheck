@@ -1,3 +1,4 @@
+use crate::concurrent::map_all;
 use serde::Serialize;
 use std::net::IpAddr;
 use std::time::Duration;
@@ -47,13 +48,7 @@ pub fn ping(target: &str) -> PingResult {
 
 /// Pings each target concurrently and returns results in the same order.
 pub fn ping_all(targets: &[&str]) -> Vec<PingResult> {
-    std::thread::scope(|scope| {
-        let handles: Vec<_> = targets
-            .iter()
-            .map(|target| scope.spawn(move || ping(target)))
-            .collect();
-        handles.into_iter().map(|h| h.join().unwrap()).collect()
-    })
+    map_all(targets, ping)
 }
 
 #[cfg(test)]

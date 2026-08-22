@@ -205,93 +205,71 @@ mod tests {
         assert_eq!(r.if_index, None);
     }
 
+    fn resolver(
+        domain: Option<&str>,
+        search_domains: &[&str],
+        nameservers: &[&str],
+        if_index: Option<u32>,
+        if_name: Option<&str>,
+    ) -> Resolver {
+        Resolver {
+            domain: domain.map(String::from),
+            search_domains: search_domains.iter().map(|s| s.to_string()).collect(),
+            nameservers: nameservers.iter().map(|s| s.to_string()).collect(),
+            if_index,
+            if_name: if_name.map(String::from),
+            scoped: true,
+            reachable: true,
+        }
+    }
+
+    fn en0_resolver() -> Resolver {
+        resolver(None, &[], &["9.9.9.9"], Some(11), Some("en0"))
+    }
+
+    fn utun3_resolver() -> Resolver {
+        resolver(
+            Some("corp.example.com"),
+            &[],
+            &["10.10.10.10"],
+            Some(20),
+            Some("utun3"),
+        )
+    }
+
     #[test]
     fn detects_split_dns_via_vpn_tunnel() {
-        let resolvers = vec![
-            Resolver {
-                domain: None,
-                search_domains: vec![],
-                nameservers: vec!["9.9.9.9".to_string()],
-                if_index: Some(11),
-                if_name: Some("en0".to_string()),
-                scoped: true,
-                reachable: true,
-            },
-            Resolver {
-                domain: Some("corp.example.com".to_string()),
-                search_domains: vec![],
-                nameservers: vec!["10.10.10.10".to_string()],
-                if_index: Some(20),
-                if_name: Some("utun3".to_string()),
-                scoped: true,
-                reachable: true,
-            },
-        ];
+        let resolvers = vec![en0_resolver(), utun3_resolver()];
         assert!(has_split_dns(&resolvers));
     }
 
     #[test]
     fn no_split_dns_when_no_scoped_tunnel_resolver() {
-        let resolvers = vec![Resolver {
-            domain: None,
-            search_domains: vec![],
-            nameservers: vec!["9.9.9.9".to_string()],
-            if_index: Some(11),
-            if_name: Some("en0".to_string()),
-            scoped: true,
-            reachable: true,
-        }];
-        assert!(!has_split_dns(&resolvers));
+        assert!(!has_split_dns(&[en0_resolver()]));
     }
 
     #[test]
     fn vpn_scoped_domains_collects_tunnel_resolver_domains() {
-        let resolvers = vec![
-            Resolver {
-                domain: None,
-                search_domains: vec![],
-                nameservers: vec!["9.9.9.9".to_string()],
-                if_index: Some(11),
-                if_name: Some("en0".to_string()),
-                scoped: true,
-                reachable: true,
-            },
-            Resolver {
-                domain: Some("corp.example.com".to_string()),
-                search_domains: vec![],
-                nameservers: vec!["10.10.10.10".to_string()],
-                if_index: Some(20),
-                if_name: Some("utun3".to_string()),
-                scoped: true,
-                reachable: true,
-            },
-            Resolver {
-                domain: None,
-                search_domains: vec!["vpn.example.net".to_string()],
-                nameservers: vec!["192.0.2.31".to_string()],
-                if_index: Some(19),
-                if_name: Some("utun4".to_string()),
-                scoped: true,
-                reachable: true,
-            },
-        ];
+        let utun4_resolver = resolver(
+            None,
+            &["vpn.example.net"],
+            &["192.0.2.31"],
+            Some(19),
+            Some("utun4"),
+        );
+        let resolvers = vec![en0_resolver(), utun3_resolver(), utun4_resolver];
         assert_eq!(
             vpn_scoped_domains(&resolvers),
-            vec!["corp.example.com".to_string(), "vpn.example.net".to_string()]
+            vec![
+                "corp.example.com".to_string(),
+                "vpn.example.net".to_string()
+            ]
         );
     }
 
     #[test]
     fn vpn_scoped_domains_empty_without_tunnel_resolver() {
-        let resolvers = vec![Resolver {
-            domain: Some("lan".to_string()),
-            search_domains: vec![],
-            nameservers: vec!["9.9.9.9".to_string()],
-            if_index: Some(11),
-            if_name: Some("en0".to_string()),
-            scoped: true,
-            reachable: true,
-        }];
-        assert!(vpn_scoped_domains(&resolvers).is_empty());
+        let lan_resolver = resolver(Some("lan"), &[], &["9.9.9.9"], Some(11), Some("en0"));
+        assert!(vpn_scoped_domains(&[lan_resolver]).is_empty());
     }
 }
