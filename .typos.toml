@@ -1,3 +1,8 @@
 [default.extend-words]
 # "ratatui" (the TUI crate) reads as a typo of "ratatouille" to typos.
 ratatui = "ratatui"
+
+[default.extend-identifiers]
+# Pico CSS's SRI hash for the CDN <link> in site/index.html — typos
+# "corrects" a substring of the base64 and would corrupt the hash.
+NZhm4G1I7BpEGdjDKnzEfy3d78xvy7ECKUwwnKTYi036z42IyF056PbHfpQLIYgL = "NZhm4G1I7BpEGdjDKnzEfy3d78xvy7ECKUwwnKTYi036z42IyF056PbHfpQLIYgL"

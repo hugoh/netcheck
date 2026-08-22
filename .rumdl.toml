@@ -1,0 +1,2 @@
+[MD013]
+code-blocks = false  # ASCII-art/JSON samples in the README are wider than 80 cols

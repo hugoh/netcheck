@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#MISE description="Build the static site for GitHub Pages"
+#MISE outputs=["site"]
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# site/index.html and site/style.css are hand-written and checked in; the
+# screenshots are generated separately (mise run screenshot:apps) and kept
+# out of git to avoid duplicating the copies already under assets/.
+mkdir -p "$ROOT_DIR/site/screenshots"
+cp "$ROOT_DIR/assets/screenshots/"*.png "$ROOT_DIR/site/screenshots/"

@@ -81,6 +81,48 @@ itself rather than using AppKit. NetCheck.app is the one that's meant to
 feel like a Mac app; the GUI is there for the cases (remote/X11, or just
 preference) where a plain window beats either a terminal or a native app.
 
+## Screenshots
+
+**CLI** — `netcheck vpn`
+
+```json
+{
+  "tunnels": [],
+  "primary_interface": "en0",
+  "connected": false,
+  "split_tunnel": false,
+  "routed_subnets": []
+}
+```
+
+**TUI** — `netcheck-tui`
+
+```text
+ Overview   DNS   Reachability   Wi-Fi
+┌Interfaces────────────────────────────┐┌VPN / Tunnel────────────────┐┌Wi-Fi───────────────────────┐
+│en0      UP, ROUTABLE    192.168.68.18││Primary: en0                ││SSID: -                     │
+│awdl0    UP, LINK-LOCAL  fe80::xxxx:xx││VPN connected: false        ││Channel: 40 (5GHz, 160MHz)  │
+│llw0     UP, LINK-LOCAL  fe80::xxxx:xx││Split tunnel: false         ││Signal: -44 dBm             │
+│utun0    UP, LINK-LOCAL  fe80::8318:87││Split DNS: false            ││Noise: -92 dBm              │
+│utun1    UP, LINK-LOCAL  fe80::1ab6:1a││                            ││Security: WPA3 Personal     │
+│utun2    UP, LINK-LOCAL  fe80::822d:1f││                            ││PHY mode: 802.11ax          │
+└──────────────────────────────────────┘│                            ││                            │
+┌Interface detail──────────────────────┐└────────────────────────────┘│                            │
+│en0                                   │┌Proxy───────────────────────┐│                            │
+│  192.168.68.186/24           routable││HTTP: off                   ││                            │
+│  fe80::42f:a459:cbee:c64e/64 link-loc││HTTPS: off                  │└────────────────────────────┘
+└──────────────────────────────────────┘└────────────────────────────┘└────────────────────────────┘
+q: quit   r: refresh now   a: auto-refresh (off)   1-4: tabs   updated 0s ago   netcheck dev-396365d
+```
+
+**GUI** (`netcheck-gui`)
+
+![netcheck-gui screenshot](assets/screenshots/netcheck-gui.png)
+
+**NetCheck.app**:
+
+![NetCheck.app screenshot](assets/screenshots/netcheck-app.png)
+
 ## Usage
 
 ```sh
@@ -103,9 +145,7 @@ The native app, the TUI, and the GUI all auto-refresh every 5 seconds
 (off by default in the GUI/native app — toggle with `a`); the CLI runs on
 demand and is meant for scripting/piping into `jq`.
 
-## Status
-
-Working prototype: all front ends share the same diagnostics core.
-
-Not yet covered: proxy configuration (`scutil --proxy`), IPv6-only
-reachability nuances, and Wi-Fi-specific diagnostics (SSID, signal, channel).
+NetCheck.app uses Cmd-modified shortcuts instead — `q` to quit, `⌘R` to
+refresh, `⌘A` to toggle auto-refresh, `⌘1`-`⌘4` to switch tabs — shown in
+its toolbar and footer, so typing in a field can't accidentally trigger
+them.

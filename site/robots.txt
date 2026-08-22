@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://hugoh.github.io/netcheck/sitemap.xml

@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>netcheck — A holistic view of network status on macOS.</title>
+<meta name="description" content="Interfaces, VPN/tunnel state, DNS resolvers (including split-tunnel/split-DNS), and reachability — the things you end up checking manually when the Cisco VPN acts up.">
+<link rel="canonical" href="https://hugoh.github.io/netcheck/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="netcheck">
+<meta property="og:description" content="Interfaces, VPN/tunnel state, DNS resolvers (including split-tunnel/split-DNS), and reachability — the things you end up checking manually when the Cisco VPN acts up.">
+<meta property="og:url" content="https://hugoh.github.io/netcheck/">
+<link rel="stylesheet"
+  href="https://cdn.jsdelivr.net/npm/@picocss/pico@2.1.1/css/pico.classless.min.css"
+  integrity="sha384-NZhm4G1I7BpEGdjDKnzEfy3d78xvy7ECKUwwnKTYi036z42IyF056PbHfpQLIYgL" crossorigin="anonymous">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="topnav">
+<a class="brand" href="#">netcheck</a>
+<a href="#install">Install</a>
+<a href="#flavors">The four flavors</a>
+<a href="#screenshots">Screenshots</a>
+<a href="#usage">Usage</a>
+<a href="https://github.com/hugoh/netcheck">GitHub</a>
+</nav>
+<main>
+<h1 id="netcheck">netcheck</h1>
+
+<p>A holistic view of network status on macOS: interfaces, VPN/tunnel state, DNS resolvers (including split-tunnel/split-DNS), and reachability — the things you end up checking manually when the Cisco VPN acts up.</p>
+
+<p><a href="https://github.com/hugoh/netcheck/actions/workflows/ci.yml"><img src="https://github.com/hugoh/netcheck/actions/workflows/ci.yml/badge.svg" alt="CI" /></a></p>
+
+<p>netcheck reports:</p>
+
+<ul>
+<li><strong>Interfaces</strong> — name, up/down, loopback, addresses</li>
+<li><strong>VPN / tunnel</strong> — which tunnel interfaces have a real address, what your actual default route is, and whether that combination looks like a split tunnel</li>
+<li><strong>DNS</strong> — every resolver macOS knows about, including scoped (per-interface) resolvers — the mechanism Cisco AnyConnect and similar clients use for split-DNS — and whether a scoped resolver is bound to a VPN tunnel</li>
+<li><strong>Reachability</strong> — concurrent pings to well-known public DNS servers, and concurrent HTTPS connects to well-known domains (not ping, since some operators filter ICMP at the edge regardless of whether the service is up)</li>
+<li><strong>DNS resolution</strong> — resolves well-known domains and reports success, addresses, and lookup latency</li>
+</ul>
+
+<h2 id="install">Install</h2>
+
+<p>Three ways to get netcheck, in order of ease.</p>
+
+<h3 id="homebrew">Homebrew (recommended)</h3>
+
+<pre><code class="language-sh">brew tap hugoh/tap
+brew install netcheck              # CLI + TUI + GUI
+brew install --cask netcheck       # native SwiftUI app
+</code></pre>
+
+<p>You can install either or both — they're independent.</p>
+
+<h3 id="direct-download">Direct download</h3>
+
+<p>Grab the latest release from the <a href="https://github.com/hugoh/netcheck/releases">Releases page</a>:</p>
+
+<ul>
+<li><code>netcheck-&lt;version&gt;-aarch64-apple-darwin.tar.gz</code> — the <code>netcheck</code>, <code>netcheck-tui</code>, and <code>netcheck-gui</code> binaries. Unpack and put them on your <code>PATH</code>.</li>
+<li><code>NetCheck-&lt;version&gt;.zip</code> — the native app. Unzip and drag <code>NetCheck.app</code> to <code>/Applications</code>.</li>
+</ul>
+
+<p>Both are Apple Silicon (arm64) only.</p>
+
+<p><strong>Note</strong>: <code>NetCheck.app</code> is ad-hoc signed, not notarized with a Developer ID. The Homebrew cask strips the quarantine attribute on install, so it opens normally. With a direct download, macOS will flag it as from an unidentified developer on first launch — right-click (or Control-click) the app and choose <strong>Open</strong>, or clear it manually: <code>xattr -cr /Applications/NetCheck.app</code>.</p>
+
+<h3 id="from-source">From source</h3>
+
+<pre><code class="language-sh">mise run build:cli       # netcheck-cli
+mise run build:tui       # netcheck-tui
+mise run build:gui       # netcheck-gui
+mise run build:app       # dev build of the native NetCheck.app
+mise run bundle:swiftui  # signed release .app bundle of NetCheck
+</code></pre>
+
+<h2 id="flavors">The four flavors</h2>
+
+<p>netcheck ships as four separate front ends, all built on the same diagnostics core, so pick whichever fits how you want to check your network.</p>
+
+<table>
+<thead>
+<tr>
+<th></th>
+<th>What it is</th>
+<th>Run it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>CLI</strong> (<code>netcheck</code>)</td>
+<td>Scriptable, JSON output, one-shot checks</td>
+<td><code>netcheck status</code></td>
+</tr>
+<tr>
+<td><strong>TUI</strong> (<code>netcheck-tui</code>)</td>
+<td>Live-refreshing terminal dashboard</td>
+<td><code>netcheck-tui</code></td>
+</tr>
+<tr>
+<td><strong>GUI</strong> (<code>netcheck-gui</code>)</td>
+<td>Plain cross-platform-style window (egui) — same panels as the TUI, but a resizable window with tabs</td>
+<td><code>netcheck-gui</code></td>
+</tr>
+<tr>
+<td><strong>NetCheck.app</strong></td>
+<td>A real native macOS app (SwiftUI/AppKit) — Dark Mode, vibrancy, proper window chrome</td>
+<td>open from Applications, or <code>open /Applications/NetCheck.app</code></td>
+</tr>
+</tbody>
+</table>
+
+<p><code>netcheck-gui</code> can never look pixel-native on macOS — it draws every widget itself rather than using AppKit. NetCheck.app is the one that's meant to feel like a Mac app; the GUI is there for the cases (remote/X11, or just preference) where a plain window beats either a terminal or a native app.</p>
+
+<h2 id="screenshots">Screenshots</h2>
+
+<h3 id="screenshot-cli">CLI — <code>netcheck vpn</code></h3>
+
+<pre><code class="language-json">{
+  "tunnels": [],
+  "primary_interface": "en0",
+  "connected": false,
+  "split_tunnel": false,
+  "routed_subnets": []
+}
+</code></pre>
+
+<h3 id="screenshot-tui">TUI — <code>netcheck-tui</code></h3>
+
+<pre><code class="language-text"> Overview   DNS   Reachability   Wi-Fi
+┌Interfaces────────────────────────────┐┌VPN / Tunnel────────────────┐┌Wi-Fi───────────────────────┐
+│en0      UP, ROUTABLE    192.168.68.18││Primary: en0                ││SSID: -                     │
+│awdl0    UP, LINK-LOCAL  fe80::xxxx:xx││VPN connected: false        ││Channel: 40 (5GHz, 160MHz)  │
+│llw0     UP, LINK-LOCAL  fe80::xxxx:xx││Split tunnel: false         ││Signal: -44 dBm             │
+│utun0    UP, LINK-LOCAL  fe80::8318:87││Split DNS: false            ││Noise: -92 dBm              │
+│utun1    UP, LINK-LOCAL  fe80::1ab6:1a││                            ││Security: WPA3 Personal     │
+│utun2    UP, LINK-LOCAL  fe80::822d:1f││                            ││PHY mode: 802.11ax          │
+└──────────────────────────────────────┘│                            ││                            │
+┌Interface detail──────────────────────┐└────────────────────────────┘│                            │
+│en0                                   │┌Proxy───────────────────────┐│                            │
+│  192.168.68.186/24           routable││HTTP: off                   ││                            │
+│  fe80::42f:a459:cbee:c64e/64 link-loc││HTTPS: off                  │└────────────────────────────┘
+└──────────────────────────────────────┘└────────────────────────────┘└────────────────────────────┘
+q: quit   r: refresh now   a: auto-refresh (off)   1-4: tabs   updated 0s ago   netcheck dev-396365d
+</code></pre>
+
+<h3 id="screenshot-gui">GUI — <code>netcheck-gui</code></h3>
+
+<img src="screenshots/netcheck-gui.png" alt="netcheck-gui screenshot" class="screenshot">
+
+<h3 id="screenshot-app">NetCheck.app</h3>
+
+<img src="screenshots/netcheck-app.png" alt="NetCheck.app screenshot" class="screenshot">
+
+<h2 id="usage">Usage</h2>
+
+<pre><code class="language-sh">netcheck status                              # full snapshot as JSON
+netcheck interfaces
+netcheck dns
+netcheck vpn
+netcheck ping 1.1.1.1 8.8.8.8
+netcheck resolve google.com github.com
+netcheck connect amazon.com microsoft.com --port 443
+
+# live terminal dashboard: q quit, r refresh, a toggle auto-refresh
+netcheck-tui
+
+# native-style window: same q/r/a keys, [1]-[4] to switch tabs
+netcheck-gui
+</code></pre>
+
+<p>The native app, the TUI, and the GUI all auto-refresh every 5 seconds (off by default in the GUI/native app — toggle with <code>a</code>); the CLI runs on demand and is meant for scripting/piping into <code>jq</code>.</p>
+
+<p>NetCheck.app uses Cmd-modified shortcuts instead — <code>q</code> to quit, <code>⌘R</code> to refresh, <code>⌘A</code> to toggle auto-refresh, <code>⌘1</code>-<code>⌘4</code> to switch tabs — shown in its toolbar and footer, so typing in a field can't accidentally trigger them.</p>
+
+</main>
+<footer>
+<p>Source, issues, and releases on <a href="https://github.com/hugoh/netcheck">GitHub</a>.</p>
+</footer>
+</body>
+</html>

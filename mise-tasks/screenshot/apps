@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+#MISE description="Capture window screenshots of netcheck-gui and NetCheck.app into assets/screenshots"
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+OUT_DIR="$ROOT_DIR/assets/screenshots"
+mkdir -p "$OUT_DIR"
+
+# Both permissions are granted per-requesting-process, not per-script, so
+# check up front and fail with an actionable message instead of the cryptic
+# errors osascript/screencapture give (-1719, "could not create image").
+check_permissions() {
+	if ! screencapture -x -t png "$OUT_DIR/.permcheck.png" 2>/dev/null; then
+		rm -f "$OUT_DIR/.permcheck.png"
+		echo "error: screencapture failed — grant Screen Recording permission to" >&2
+		echo "       the app running this script in System Settings > Privacy &" >&2
+		echo "       Security > Screen Recording, then try again." >&2
+		exit 1
+	fi
+	rm -f "$OUT_DIR/.permcheck.png"
+
+	if ! osascript -e 'tell application "System Events" to get name of first process' >/dev/null 2>&1; then
+		echo "error: System Events access denied — grant Accessibility permission to" >&2
+		echo "       the app running this script in System Settings > Privacy &" >&2
+		echo "       Security > Accessibility, then try again." >&2
+		exit 1
+	fi
+}
+
+check_permissions
+
+# Captures window 1 of the named running app to $OUT_DIR/$2.png, by reading
+# its screen position/size via System Events and passing that as a region to
+# screencapture (window IDs aren't exposed for every app's window, but
+# position/size always are).
+#
+# Requires the process invoking this script to have both Screen Recording
+# and Accessibility permission (System Settings > Privacy & Security).
+capture_app() {
+	local app_name="$1"
+	local out_name="$2"
+
+	if ! osascript -e "tell application \"System Events\" to (name of processes) contains \"$app_name\"" |
+		grep -q true; then
+		echo "warning: \"$app_name\" isn't running — launch it and re-run this task. Skipping." >&2
+		return 0
+	fi
+
+	local bounds
+	bounds="$(
+		osascript <<APPLESCRIPT
+tell application "System Events"
+	tell process "$app_name"
+		set frontmost to true
+		set {xpos, ypos} to position of window 1
+		set {w, h} to size of window 1
+		return (xpos as string) & "," & (ypos as string) & "," & (w as string) & "," & (h as string)
+	end tell
+end tell
+APPLESCRIPT
+	)"
+
+	sleep 0.3
+	screencapture -x -R "$bounds" "$OUT_DIR/$out_name.png"
+
+	# Blurs any EUI-64-derived link-local IPv6 address (e.g. awdl0/llw0),
+	# which embeds a real interface MAC address, before the screenshot is
+	# ever written to a place a human reviews or commits.
+	swift "$ROOT_DIR/scripts/redact_mac.swift" "$OUT_DIR/$out_name.png"
+	echo "Wrote $OUT_DIR/$out_name.png"
+}
+
+capture_app "netcheck-gui" "netcheck-gui"
+capture_app "NetCheckApp" "netcheck-app"
