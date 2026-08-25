@@ -104,6 +104,12 @@ enum IpStack: String, Codable {
     case none = "None"
 }
 
+enum CaptivePortalStatus: String, Codable {
+    case clear = "Clear"
+    case detected = "Detected"
+    case unknown = "Unknown"
+}
+
 struct NetworkStatus: Codable {
     let interfaces: [NetInterface]
     let vpn: VpnStatus
