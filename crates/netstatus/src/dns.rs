@@ -47,6 +47,21 @@ pub fn has_split_dns(resolvers: &[Resolver]) -> bool {
         .any(|r| r.scoped && r.if_name.as_deref().is_some_and(|n| n.starts_with("utun")))
 }
 
+/// Unique nameserver IPs across all resolvers, in first-seen order —
+/// used to probe each configured resolver directly (ping, TCP:53) rather
+/// than only indirectly via name resolution through the system stub.
+pub fn nameserver_ips(resolvers: &[Resolver]) -> Vec<String> {
+    let mut ips = Vec::new();
+    for r in resolvers {
+        for ns in &r.nameservers {
+            if !ips.contains(ns) {
+                ips.push(ns.clone());
+            }
+        }
+    }
+    ips
+}
+
 /// Domains only resolvable via a VPN tunnel's own resolver — i.e. every
 /// scoped resolver's domain (falling back to its first search domain) for
 /// resolvers bound to a `utun*` interface. Deduplicated, order preserved.
@@ -271,5 +286,20 @@ mod tests {
     fn vpn_scoped_domains_empty_without_tunnel_resolver() {
         let lan_resolver = resolver(Some("lan"), &[], &["9.9.9.9"], Some(11), Some("en0"));
         assert!(vpn_scoped_domains(&[lan_resolver]).is_empty());
+    }
+
+    #[test]
+    fn nameserver_ips_dedups_across_resolvers_preserving_order() {
+        let primary = resolver(None, &[], &["9.9.9.9"], Some(11), Some("en0"));
+        let scoped = resolver(None, &[], &["9.9.9.9", "1.1.1.1"], Some(11), Some("en0"));
+        assert_eq!(
+            nameserver_ips(&[primary, scoped]),
+            vec!["9.9.9.9".to_string(), "1.1.1.1".to_string()]
+        );
+    }
+
+    #[test]
+    fn nameserver_ips_empty_without_resolvers() {
+        assert!(nameserver_ips(&[]).is_empty());
     }
 }

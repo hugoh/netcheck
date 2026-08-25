@@ -1,6 +1,7 @@
 use crate::captive_portal::{self, CaptivePortalStatus};
 use crate::connect::{self, ConnectResult};
 use crate::dns::{self, Resolver};
+use crate::gateway;
 use crate::interfaces::{self, Interface};
 use crate::ip_stack::{self, IpStack};
 use crate::proxy::{self, ProxyConfig};
@@ -47,6 +48,18 @@ pub struct NetworkStatus {
     /// operators (Amazon, Microsoft) filter ICMP at their edge regardless
     /// of whether the service itself is up.
     pub domain_reachability: Vec<ConnectResult>,
+    /// ICMP reachability of the default gateway's IP(s) — a LAN-hop signal,
+    /// distinct from `reachability`'s public anycast targets: unreachable
+    /// here alongside unreachable public targets points at the local link
+    /// rather than the ISP or upstream.
+    pub gateway_reachability: Vec<PingResult>,
+    /// ICMP reachability of each configured resolver's IP, probed directly
+    /// rather than inferred from whether name resolution succeeds.
+    pub nameserver_reachability: Vec<PingResult>,
+    /// TCP connect (port 53) reachability of each configured resolver's
+    /// IP. Like `domain_reachability`, this catches resolvers that filter
+    /// ICMP but still serve queries.
+    pub nameserver_connect: Vec<ConnectResult>,
     pub proxy: ProxyConfig,
     pub wifi: WifiStatus,
     pub ip_stack: IpStack,
@@ -183,12 +196,28 @@ pub fn collect() -> NetworkStatus {
         let proxy_handle = scope.spawn(proxy::proxy_config);
         let wifi_handle = scope.spawn(wifi::wifi_status);
         let captive_portal_handle = scope.spawn(captive_portal::check_captive_portal);
+        let gateway_reachability_handle = scope.spawn(|| {
+            let ips = gateway::default_gateway_ips();
+            let targets: Vec<&str> = ips.iter().map(String::as_str).collect();
+            reachability::ping_all(&targets)
+        });
 
         let interfaces = interfaces_handle.join().unwrap();
         let vpn = vpn::vpn_status(&interfaces);
         let ip_stack = ip_stack::detect_ip_stack(&interfaces);
         let resolvers = resolvers_handle.join().unwrap();
         let split_dns = dns::has_split_dns(&resolvers);
+        let nameserver_ips = dns::nameserver_ips(&resolvers);
+        let ping_targets = nameserver_ips.clone();
+        let connect_targets = nameserver_ips.clone();
+        let nameserver_reachability_handle = scope.spawn(move || {
+            let targets: Vec<&str> = ping_targets.iter().map(String::as_str).collect();
+            reachability::ping_all(&targets)
+        });
+        let nameserver_connect_handle = scope.spawn(move || {
+            let targets: Vec<&str> = connect_targets.iter().map(String::as_str).collect();
+            connect::connect_all(&targets, 53)
+        });
         let core_signals = core_signals_handle.join().unwrap();
 
         NetworkStatus {
@@ -196,6 +225,9 @@ pub fn collect() -> NetworkStatus {
             reachability_v6: core_signals.reachability_v6,
             resolution: core_signals.resolution,
             domain_reachability: core_signals.domain_reachability,
+            gateway_reachability: gateway_reachability_handle.join().unwrap(),
+            nameserver_reachability: nameserver_reachability_handle.join().unwrap(),
+            nameserver_connect: nameserver_connect_handle.join().unwrap(),
             proxy: proxy_handle.join().unwrap(),
             wifi: wifi_handle.join().unwrap(),
             captive_portal: captive_portal_handle.join().unwrap(),
@@ -220,6 +252,9 @@ pub enum StatusField {
     ReachabilityV6(Vec<PingResult>),
     Resolution(Vec<ResolutionResult>),
     DomainReachability(Vec<ConnectResult>),
+    GatewayReachability(Vec<PingResult>),
+    NameserverReachability(Vec<PingResult>),
+    NameserverConnect(Vec<ConnectResult>),
     Proxy(ProxyConfig),
     WifiIdentity(WifiIdentity),
     WifiRadio(WifiRadio),
@@ -242,7 +277,22 @@ pub fn collect_streaming(tx: mpsc::Sender<StatusField>) {
         scope.spawn(|| {
             let resolvers = dns::list_resolvers();
             let _ = tx.send(StatusField::SplitDns(dns::has_split_dns(&resolvers)));
+            let nameserver_ips = dns::nameserver_ips(&resolvers);
             let _ = tx.send(StatusField::Resolvers(resolvers));
+            let targets: Vec<&str> = nameserver_ips.iter().map(String::as_str).collect();
+            let _ = tx.send(StatusField::NameserverReachability(reachability::ping_all(
+                &targets,
+            )));
+            let _ = tx.send(StatusField::NameserverConnect(connect::connect_all(
+                &targets, 53,
+            )));
+        });
+        scope.spawn(|| {
+            let ips = gateway::default_gateway_ips();
+            let targets: Vec<&str> = ips.iter().map(String::as_str).collect();
+            let _ = tx.send(StatusField::GatewayReachability(reachability::ping_all(
+                &targets,
+            )));
         });
         scope.spawn(|| {
             let _ = tx.send(StatusField::Reachability(reachability::ping_all(
@@ -301,6 +351,9 @@ pub struct PartialStatus {
     pub reachability_v6: Option<Vec<PingResult>>,
     pub resolution: Option<Vec<ResolutionResult>>,
     pub domain_reachability: Option<Vec<ConnectResult>>,
+    pub gateway_reachability: Option<Vec<PingResult>>,
+    pub nameserver_reachability: Option<Vec<PingResult>>,
+    pub nameserver_connect: Option<Vec<ConnectResult>>,
     pub proxy: Option<ProxyConfig>,
     pub wifi_identity: Option<WifiIdentity>,
     pub wifi_radio: Option<WifiRadio>,
@@ -319,6 +372,9 @@ impl PartialStatus {
             StatusField::ReachabilityV6(v) => self.reachability_v6 = Some(v),
             StatusField::Resolution(v) => self.resolution = Some(v),
             StatusField::DomainReachability(v) => self.domain_reachability = Some(v),
+            StatusField::GatewayReachability(v) => self.gateway_reachability = Some(v),
+            StatusField::NameserverReachability(v) => self.nameserver_reachability = Some(v),
+            StatusField::NameserverConnect(v) => self.nameserver_connect = Some(v),
             StatusField::Proxy(v) => self.proxy = Some(v),
             StatusField::WifiIdentity(v) => self.wifi_identity = Some(v),
             StatusField::WifiRadio(v) => self.wifi_radio = Some(v),
@@ -336,6 +392,9 @@ impl PartialStatus {
             || self.reachability_v6.is_some()
             || self.resolution.is_some()
             || self.domain_reachability.is_some()
+            || self.gateway_reachability.is_some()
+            || self.nameserver_reachability.is_some()
+            || self.nameserver_connect.is_some()
             || self.proxy.is_some()
             || self.wifi_identity.is_some()
             || self.wifi_radio.is_some()
@@ -390,12 +449,12 @@ mod tests {
         let received: Vec<StatusField> = rx.into_iter().collect();
         assert_eq!(
             received.len(),
-            13,
-            "expected exactly 13 StatusField messages, got {}: {received:?}",
+            16,
+            "expected exactly 16 StatusField messages, got {}: {received:?}",
             received.len()
         );
 
-        let all_variants: [StatusField; 13] = [
+        let all_variants: [StatusField; 16] = [
             StatusField::Interfaces(Vec::new()),
             StatusField::Vpn(VpnStatus {
                 tunnels: Vec::new(),
@@ -410,6 +469,9 @@ mod tests {
             StatusField::ReachabilityV6(Vec::new()),
             StatusField::Resolution(Vec::new()),
             StatusField::DomainReachability(Vec::new()),
+            StatusField::GatewayReachability(Vec::new()),
+            StatusField::NameserverReachability(Vec::new()),
+            StatusField::NameserverConnect(Vec::new()),
             StatusField::Proxy(proxy::ProxyConfig {
                 http: proxy::ProxyEndpoint {
                     enabled: false,
@@ -593,6 +655,9 @@ mod tests {
             reachability_v6: ping_results(&[false, false, false, false, false]),
             resolution: resolution_results(&[true, false, false, false, false, false, false]),
             domain_reachability: connect_results(&[true, false, false, false, false, false, false]),
+            gateway_reachability: Vec::new(),
+            nameserver_reachability: Vec::new(),
+            nameserver_connect: Vec::new(),
             proxy: proxy::ProxyConfig {
                 http: proxy::ProxyEndpoint {
                     enabled: false,
