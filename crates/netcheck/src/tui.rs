@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use std::io::{self, Stdout};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -26,14 +26,18 @@ fn pad_col(text: &str, width: usize) -> String {
     format!("{text:<width$} ")
 }
 
-/// Formats an elapsed duration as seconds under a minute, minutes above it —
-/// "42s" reads fine, "3717s" doesn't.
+/// Formats an elapsed duration as "now" under 3s, seconds under a minute,
+/// minutes under an hour, hours above it — "42s" reads fine, "3717s" doesn't.
 fn format_age(elapsed: Duration) -> String {
     let secs = elapsed.as_secs();
-    if secs > 59 {
+    if secs < 3 {
+        "now".to_string()
+    } else if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
         format!("{}m", secs / 60)
     } else {
-        format!("{secs}s")
+        format!("{}h", secs / 3600)
     }
 }
 
@@ -89,35 +93,59 @@ fn tabs_line(active: Tab) -> Line<'static> {
     Line::from(spans)
 }
 
+/// Runs one `collect_streaming` pass and forwards each field to `tx`, but
+/// only as long as `generation` still matches `this_gen` — if a newer run
+/// (manual or auto) has started in the meantime, this run's remaining
+/// fields are dropped instead of overwriting fresher data.
+fn run_and_forward(tx: &mpsc::Sender<StatusField>, generation: &Arc<AtomicU64>, this_gen: u64) {
+    let (inner_tx, inner_rx) = mpsc::channel();
+    std::thread::spawn(move || netstatus::collect_streaming(inner_tx));
+    for field in inner_rx {
+        if generation.load(Ordering::SeqCst) == this_gen {
+            let _ = tx.send(field);
+        }
+    }
+}
+
 /// Spawns the background workers. Returns a receiver fed by both an initial
 /// one-shot collection, a periodic auto-refresh (gated by `auto_refresh`,
 /// off by default), and manual refreshes triggered via the returned sender.
+/// A shared generation counter ensures that if a manual and an auto-refresh
+/// run overlap, only the most recently started run's fields are merged.
 fn spawn_workers(auto_refresh: Arc<AtomicBool>) -> (mpsc::Receiver<StatusField>, mpsc::Sender<()>) {
     let (tx, rx) = mpsc::channel();
     let (manual_tx, manual_rx) = mpsc::channel::<()>();
+    let generation = Arc::new(AtomicU64::new(0));
 
     {
         let tx = tx.clone();
+        let generation = generation.clone();
         std::thread::spawn(move || {
             for () in manual_rx {
-                netstatus::collect_streaming(tx.clone());
+                let this_gen = generation.fetch_add(1, Ordering::SeqCst) + 1;
+                run_and_forward(&tx, &generation, this_gen);
             }
         });
     }
 
-    std::thread::spawn(move || {
-        netstatus::collect_streaming(tx.clone());
-        loop {
-            if auto_refresh.load(Ordering::Relaxed) {
-                std::thread::sleep(REFRESH_INTERVAL);
+    {
+        let generation = generation.clone();
+        std::thread::spawn(move || {
+            let this_gen = generation.fetch_add(1, Ordering::SeqCst) + 1;
+            run_and_forward(&tx, &generation, this_gen);
+            loop {
                 if auto_refresh.load(Ordering::Relaxed) {
-                    netstatus::collect_streaming(tx.clone());
+                    std::thread::sleep(REFRESH_INTERVAL);
+                    if auto_refresh.load(Ordering::Relaxed) {
+                        let this_gen = generation.fetch_add(1, Ordering::SeqCst) + 1;
+                        run_and_forward(&tx, &generation, this_gen);
+                    }
+                } else {
+                    std::thread::sleep(Duration::from_millis(200));
                 }
-            } else {
-                std::thread::sleep(Duration::from_millis(200));
             }
-        }
-    });
+        });
+    }
 
     (rx, manual_tx)
 }
@@ -597,13 +625,28 @@ fn draw(
             .map(|t| format!("updated {} ago", format_age(t.elapsed())))
             .unwrap_or_default();
         let auto_state = if auto_refresh { "on, every 5s" } else { "off" };
-        frame.render_widget(
-            Paragraph::new(format!(
-                "q: quit   r: refresh now   a: auto-refresh ({auto_state})   1-4: tabs   {age}   netcheck {}",
-                netstatus::VERSION
-            )),
-            rows[2],
-        );
+
+        let (confidence_label, confidence_color) = match status.confidence() {
+            Some(netstatus::ConnectionConfidence::Online) => ("Online", Color::Green),
+            Some(netstatus::ConnectionConfidence::Limited) => ("Limited", Color::Yellow),
+            Some(netstatus::ConnectionConfidence::Offline) => ("Offline", Color::Red),
+            None => ("collecting...", Color::DarkGray),
+        };
+        let mut footer_spans = vec![Span::styled(
+            format!("{confidence_label}   "),
+            Style::default().fg(confidence_color),
+        )];
+        if status.captive_portal == Some(netstatus::CaptivePortalStatus::Detected) {
+            footer_spans.push(Span::styled(
+                "Captive portal detected   ",
+                Style::default().fg(Color::Yellow),
+            ));
+        }
+        footer_spans.push(Span::raw(format!(
+            "q: quit   r: refresh now   a: auto-refresh ({auto_state})   1-4: tabs   {age}   netcheck {}",
+            netstatus::VERSION
+        )));
+        frame.render_widget(Paragraph::new(Line::from(footer_spans)), rows[2]);
     })?;
     Ok(())
 }
@@ -676,15 +719,31 @@ mod tests {
         );
     }
 
-    #[test]
-    fn format_age_shows_seconds_under_a_minute() {
-        assert_eq!(format_age(Duration::from_secs(0)), "0s");
-        assert_eq!(format_age(Duration::from_secs(59)), "59s");
+    #[derive(serde::Deserialize)]
+    struct AgeFormatCase {
+        seconds: u64,
+        magnitude: u64,
+        unit: String,
     }
 
+    /// Cases shared with the SwiftUI app's FooterFormattingTests, so both
+    /// UIs agree on the now/seconds/minutes/hours thresholds.
     #[test]
-    fn format_age_shows_minutes_at_and_above_a_minute() {
-        assert_eq!(format_age(Duration::from_secs(60)), "1m");
-        assert_eq!(format_age(Duration::from_secs(125)), "2m");
+    fn format_age_matches_shared_fixture() {
+        let fixture = include_str!("../../../testdata/age-format-cases.json");
+        let cases: Vec<AgeFormatCase> = serde_json::from_str(fixture).unwrap();
+        for case in cases {
+            let expected = if case.unit == "now" {
+                "now".to_string()
+            } else {
+                format!("{}{}", case.magnitude, case.unit)
+            };
+            assert_eq!(
+                format_age(Duration::from_secs(case.seconds)),
+                expected,
+                "seconds={}",
+                case.seconds
+            );
+        }
     }
 }

@@ -120,8 +120,18 @@ struct ContentView: View {
 
     private var footer: some View {
         HStack(spacing: 12) {
+            if let confidence = fetcher.status.confidence {
+                Label(confidence.label, systemImage: confidence.icon)
+                    .foregroundStyle(confidence.color)
+            }
+
             Text(Self.appVersion)
                 .foregroundStyle(.secondary)
+
+            if fetcher.status.captivePortal == .detected {
+                Label("Captive portal", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.yellow)
+            }
 
             Spacer()
 
@@ -131,8 +141,10 @@ struct ContentView: View {
             .keyboardShortcut("a", modifiers: [.command])
 
             if let updated = fetcher.lastUpdated {
-                Text("Updated \(updated, style: .relative) ago")
-                    .foregroundStyle(.secondary)
+                TimelineView(.periodic(from: updated, by: 1)) { context in
+                    Text(updatedAgoText(now: context.date, updated: updated))
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .padding(.horizontal, 12)

@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// Mirrors `netstatus::dns::vpn_scoped_domains` (Rust) — domains only
 /// resolvable via a VPN tunnel's own resolver.
@@ -30,6 +31,7 @@ struct StatusFieldEnvelope: Decodable {
     let wifiIdentity: WifiIdentity?
     let wifiRadio: WifiRadio?
     let ipStack: IpStack?
+    let captivePortal: CaptivePortalStatus?
 
     enum CodingKeys: String, CodingKey {
         case interfaces = "Interfaces"
@@ -44,6 +46,7 @@ struct StatusFieldEnvelope: Decodable {
         case wifiIdentity = "WifiIdentity"
         case wifiRadio = "WifiRadio"
         case ipStack = "IpStack"
+        case captivePortal = "CaptivePortal"
     }
 }
 
@@ -64,12 +67,13 @@ struct PartialNetworkStatus {
     var wifiIdentity: WifiIdentity?
     var wifiRadio: WifiRadio?
     var ipStack: IpStack?
+    var captivePortal: CaptivePortalStatus?
 
     var hasAny: Bool {
         interfaces != nil || vpn != nil || resolvers != nil || splitDns != nil
             || reachability != nil || reachabilityV6 != nil || resolution != nil
             || domainReachability != nil || proxy != nil || wifiIdentity != nil
-            || wifiRadio != nil || ipStack != nil
+            || wifiRadio != nil || ipStack != nil || captivePortal != nil
     }
 
     mutating func merge(_ envelope: StatusFieldEnvelope) {
@@ -85,5 +89,66 @@ struct PartialNetworkStatus {
         if let v = envelope.wifiIdentity { wifiIdentity = v }
         if let v = envelope.wifiRadio { wifiRadio = v }
         if let v = envelope.ipStack { ipStack = v }
+        if let v = envelope.captivePortal { captivePortal = v }
+    }
+}
+
+/// How confident netcheck is that the machine has a working internet
+/// connection. Mirrors `netstatus::status::confidence_from` (Rust) so
+/// both UIs agree on the tiering — see `vpnScopedDomains` above for the
+/// same mirroring pattern.
+enum ConnectionConfidence {
+    case online
+    case limited
+    case offline
+}
+
+extension ConnectionConfidence {
+    var label: String {
+        switch self {
+        case .online: return "Online"
+        case .limited: return "Limited"
+        case .offline: return "Offline"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .online: return "checkmark.circle.fill"
+        case .limited: return "exclamationmark.circle.fill"
+        case .offline: return "xmark.circle.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .online: return .green
+        case .limited: return .yellow
+        case .offline: return .red
+        }
+    }
+}
+
+/// Rolls up whether DNS resolution, ICMP reachability, and TCP connect
+/// each had at least one success into a single confidence tier.
+private func confidenceFrom(dnsOk: Bool, pingOk: Bool, tcpOk: Bool) -> ConnectionConfidence {
+    switch [dnsOk, pingOk, tcpOk].filter({ $0 }).count {
+    case 3, 2: return .online
+    case 1: return .limited
+    default: return .offline
+    }
+}
+
+extension PartialNetworkStatus {
+    /// `nil` until resolution, both reachability probes, and domain
+    /// reachability have all arrived.
+    var confidence: ConnectionConfidence? {
+        guard let resolution, let reachability, let reachabilityV6, let domainReachability else {
+            return nil
+        }
+        let dnsOk = resolution.contains { $0.resolved }
+        let pingOk = reachability.contains { $0.reachable } || reachabilityV6.contains { $0.reachable }
+        let tcpOk = domainReachability.contains { $0.reachable }
+        return confidenceFrom(dnsOk: dnsOk, pingOk: pingOk, tcpOk: tcpOk)
     }
 }

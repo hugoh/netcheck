@@ -1,3 +1,4 @@
+use crate::captive_portal::{self, CaptivePortalStatus};
 use crate::connect::{self, ConnectResult};
 use crate::dns::{self, Resolver};
 use crate::interfaces::{self, Interface};
@@ -49,38 +50,123 @@ pub struct NetworkStatus {
     pub proxy: ProxyConfig,
     pub wifi: WifiStatus,
     pub ip_stack: IpStack,
+    pub captive_portal: CaptivePortalStatus,
+}
+
+/// How confident netcheck is that the machine has a working internet
+/// connection, derived from three independent signal categories rather
+/// than any single probe (a host that blocks ICMP but serves DNS and TCP
+/// fine shouldn't read as offline).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub enum ConnectionConfidence {
+    Online,
+    Limited,
+    Offline,
+}
+
+/// Rolls up whether DNS resolution, ICMP reachability, and TCP connect
+/// each had at least one success into a single confidence tier. 3-of-3 or
+/// 2-of-3 categories succeeding means the connection is up even if one
+/// probe type is filtered somewhere on the path; 1-of-3 is a degraded
+/// connection; 0-of-3 is offline.
+fn confidence_from(dns_ok: bool, ping_ok: bool, tcp_ok: bool) -> ConnectionConfidence {
+    match [dns_ok, ping_ok, tcp_ok].iter().filter(|ok| **ok).count() {
+        3 | 2 => ConnectionConfidence::Online,
+        1 => ConnectionConfidence::Limited,
+        _ => ConnectionConfidence::Offline,
+    }
+}
+
+impl NetworkStatus {
+    pub fn confidence(&self) -> ConnectionConfidence {
+        let dns_ok = self.resolution.iter().any(|r| r.resolved);
+        let ping_ok = self.reachability.iter().any(|p| p.reachable)
+            || self.reachability_v6.iter().any(|p| p.reachable);
+        let tcp_ok = self.domain_reachability.iter().any(|c| c.reachable);
+        confidence_from(dns_ok, ping_ok, tcp_ok)
+    }
+}
+
+/// The four probes that determine `ConnectionConfidence`, run once and
+/// shared by both `collect()` (which needs the raw results in
+/// `NetworkStatus`) and `confidence_only()` (which needs only the derived
+/// tier) instead of each spawning its own copy of the same probes.
+struct CoreSignals {
+    resolution: Vec<ResolutionResult>,
+    reachability: Vec<PingResult>,
+    reachability_v6: Vec<PingResult>,
+    domain_reachability: Vec<ConnectResult>,
+}
+
+impl CoreSignals {
+    fn collect() -> Self {
+        std::thread::scope(|scope| {
+            let resolution_handle =
+                scope.spawn(|| resolution::resolve_all(DEFAULT_RESOLUTION_TARGETS));
+            let reachability_handle = scope.spawn(|| reachability::ping_all(DEFAULT_PING_TARGETS));
+            let reachability_v6_handle =
+                scope.spawn(|| reachability::ping_all(DEFAULT_PING_TARGETS_V6));
+            let domain_reachability_handle =
+                scope.spawn(|| connect::connect_all(DEFAULT_RESOLUTION_TARGETS, 443));
+
+            CoreSignals {
+                resolution: resolution_handle.join().unwrap(),
+                reachability: reachability_handle.join().unwrap(),
+                reachability_v6: reachability_v6_handle.join().unwrap(),
+                domain_reachability: domain_reachability_handle.join().unwrap(),
+            }
+        })
+    }
+
+    fn confidence(&self) -> ConnectionConfidence {
+        let dns_ok = self.resolution.iter().any(|r| r.resolved);
+        let ping_ok = self.reachability.iter().any(|p| p.reachable)
+            || self.reachability_v6.iter().any(|p| p.reachable);
+        let tcp_ok = self.domain_reachability.iter().any(|c| c.reachable);
+        confidence_from(dns_ok, ping_ok, tcp_ok)
+    }
+}
+
+/// Derives connection confidence from only the three signal categories it
+/// needs — DNS resolution, ICMP reachability (v4+v6), TCP connect —
+/// skipping everything else `collect()` runs (Wi-Fi, proxy, interfaces,
+/// VPN, and the captive-portal probe). Use this instead of
+/// `collect().confidence()` when only the confidence tier is needed.
+pub fn confidence_only() -> ConnectionConfidence {
+    CoreSignals::collect().confidence()
 }
 
 /// Collects a full network status snapshot. Shells out to `scutil`,
-/// `ping`, and `system_profiler`, and resolves DNS; independent probes run
-/// concurrently, so this takes roughly as long as the slowest single probe
-/// (typically the Wi-Fi lookup, ~1s) rather than their sum.
+/// `ping`, and `system_profiler`, resolves DNS, and probes for a captive
+/// portal; independent probes run concurrently, so this takes roughly as
+/// long as the slowest single probe rather than their sum. Most probes
+/// (e.g. the Wi-Fi lookup) typically finish within ~1s, but the
+/// captive-portal probe has a 10s timeout, making it the worst-case bound
+/// on a slow or unresponsive network.
 pub fn collect() -> NetworkStatus {
     std::thread::scope(|scope| {
         let interfaces_handle = scope.spawn(interfaces::list_interfaces);
         let resolvers_handle = scope.spawn(dns::list_resolvers);
-        let reachability_handle = scope.spawn(|| reachability::ping_all(DEFAULT_PING_TARGETS));
-        let reachability_v6_handle =
-            scope.spawn(|| reachability::ping_all(DEFAULT_PING_TARGETS_V6));
-        let resolution_handle = scope.spawn(|| resolution::resolve_all(DEFAULT_RESOLUTION_TARGETS));
-        let domain_reachability_handle =
-            scope.spawn(|| connect::connect_all(DEFAULT_RESOLUTION_TARGETS, 443));
+        let core_signals_handle = scope.spawn(CoreSignals::collect);
         let proxy_handle = scope.spawn(proxy::proxy_config);
         let wifi_handle = scope.spawn(wifi::wifi_status);
+        let captive_portal_handle = scope.spawn(captive_portal::check_captive_portal);
 
         let interfaces = interfaces_handle.join().unwrap();
         let vpn = vpn::vpn_status(&interfaces);
         let ip_stack = ip_stack::detect_ip_stack(&interfaces);
         let resolvers = resolvers_handle.join().unwrap();
         let split_dns = dns::has_split_dns(&resolvers);
+        let core_signals = core_signals_handle.join().unwrap();
 
         NetworkStatus {
-            reachability: reachability_handle.join().unwrap(),
-            reachability_v6: reachability_v6_handle.join().unwrap(),
-            resolution: resolution_handle.join().unwrap(),
-            domain_reachability: domain_reachability_handle.join().unwrap(),
+            reachability: core_signals.reachability,
+            reachability_v6: core_signals.reachability_v6,
+            resolution: core_signals.resolution,
+            domain_reachability: core_signals.domain_reachability,
             proxy: proxy_handle.join().unwrap(),
             wifi: wifi_handle.join().unwrap(),
+            captive_portal: captive_portal_handle.join().unwrap(),
             interfaces,
             vpn,
             resolvers,
@@ -106,6 +192,7 @@ pub enum StatusField {
     WifiIdentity(WifiIdentity),
     WifiRadio(WifiRadio),
     IpStack(IpStack),
+    CaptivePortal(CaptivePortalStatus),
 }
 
 /// Runs every probe concurrently and sends each `StatusField` down `tx` the
@@ -160,6 +247,11 @@ pub fn collect_streaming(tx: mpsc::Sender<StatusField>) {
         scope.spawn(|| {
             let _ = tx.send(StatusField::WifiIdentity(wifi::wifi_identity()));
         });
+        scope.spawn(|| {
+            let _ = tx.send(StatusField::CaptivePortal(
+                captive_portal::check_captive_portal(),
+            ));
+        });
     });
 }
 
@@ -181,6 +273,7 @@ pub struct PartialStatus {
     pub wifi_identity: Option<WifiIdentity>,
     pub wifi_radio: Option<WifiRadio>,
     pub ip_stack: Option<IpStack>,
+    pub captive_portal: Option<CaptivePortalStatus>,
 }
 
 impl PartialStatus {
@@ -198,6 +291,7 @@ impl PartialStatus {
             StatusField::WifiIdentity(v) => self.wifi_identity = Some(v),
             StatusField::WifiRadio(v) => self.wifi_radio = Some(v),
             StatusField::IpStack(v) => self.ip_stack = Some(v),
+            StatusField::CaptivePortal(v) => self.captive_portal = Some(v),
         }
     }
 
@@ -214,6 +308,23 @@ impl PartialStatus {
             || self.wifi_identity.is_some()
             || self.wifi_radio.is_some()
             || self.ip_stack.is_some()
+            || self.captive_portal.is_some()
+    }
+
+    /// `None` until resolution, both reachability probes, and domain
+    /// reachability have all arrived — a partial view of only some signal
+    /// categories would misreport confidence (e.g. reading `Limited` just
+    /// because DNS hasn't come back yet, not because it failed).
+    pub fn confidence(&self) -> Option<ConnectionConfidence> {
+        let resolution = self.resolution.as_ref()?;
+        let reachability = self.reachability.as_ref()?;
+        let reachability_v6 = self.reachability_v6.as_ref()?;
+        let domain_reachability = self.domain_reachability.as_ref()?;
+        let dns_ok = resolution.iter().any(|r| r.resolved);
+        let ping_ok =
+            reachability.iter().any(|p| p.reachable) || reachability_v6.iter().any(|p| p.reachable);
+        let tcp_ok = domain_reachability.iter().any(|c| c.reachable);
+        Some(confidence_from(dns_ok, ping_ok, tcp_ok))
     }
 }
 
@@ -241,12 +352,12 @@ mod tests {
         let received: Vec<StatusField> = rx.into_iter().collect();
         assert_eq!(
             received.len(),
-            12,
-            "expected exactly 12 StatusField messages, got {}: {received:?}",
+            13,
+            "expected exactly 13 StatusField messages, got {}: {received:?}",
             received.len()
         );
 
-        let all_variants: [StatusField; 12] = [
+        let all_variants: [StatusField; 13] = [
             StatusField::Interfaces(Vec::new()),
             StatusField::Vpn(VpnStatus {
                 tunnels: Vec::new(),
@@ -283,6 +394,7 @@ mod tests {
             StatusField::WifiIdentity(WifiIdentity::default()),
             StatusField::WifiRadio(WifiRadio::default()),
             StatusField::IpStack(IpStack::None),
+            StatusField::CaptivePortal(crate::captive_portal::CaptivePortalStatus::Unknown),
         ];
 
         let mut seen: HashSet<usize> = HashSet::new();
@@ -300,6 +412,68 @@ mod tests {
             seen.len(),
             all_variants.len(),
             "not every StatusField variant was sent"
+        );
+    }
+
+    #[test]
+    fn confidence_only_runs_without_the_full_snapshot() {
+        // Smoke test: confidence_only() must compile, run to completion, and
+        // return a valid ConnectionConfidence without requiring NetworkStatus
+        // or PartialStatus — the whole point is it's independent of collect().
+        let result = confidence_only();
+        assert!(matches!(
+            result,
+            ConnectionConfidence::Online
+                | ConnectionConfidence::Limited
+                | ConnectionConfidence::Offline
+        ));
+    }
+
+    #[test]
+    fn confidence_from_all_signals_ok_is_online() {
+        assert_eq!(
+            confidence_from(true, true, true),
+            ConnectionConfidence::Online
+        );
+    }
+
+    #[test]
+    fn confidence_from_two_signals_ok_is_online() {
+        assert_eq!(
+            confidence_from(true, true, false),
+            ConnectionConfidence::Online
+        );
+        assert_eq!(
+            confidence_from(true, false, true),
+            ConnectionConfidence::Online
+        );
+        assert_eq!(
+            confidence_from(false, true, true),
+            ConnectionConfidence::Online
+        );
+    }
+
+    #[test]
+    fn confidence_from_one_signal_ok_is_limited() {
+        assert_eq!(
+            confidence_from(true, false, false),
+            ConnectionConfidence::Limited
+        );
+        assert_eq!(
+            confidence_from(false, true, false),
+            ConnectionConfidence::Limited
+        );
+        assert_eq!(
+            confidence_from(false, false, true),
+            ConnectionConfidence::Limited
+        );
+    }
+
+    #[test]
+    fn confidence_from_no_signals_ok_is_offline() {
+        assert_eq!(
+            confidence_from(false, false, false),
+            ConnectionConfidence::Offline
         );
     }
 }

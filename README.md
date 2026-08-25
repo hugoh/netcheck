@@ -101,7 +101,7 @@ netcheck ships as two front ends, both built on the same diagnostics core:
 │  192.168.68.186/24           routable││HTTP: off                   ││                            │
 │  fe80::42f:a459:cbee:c64e/64 link-loc││HTTPS: off                  │└────────────────────────────┘
 └──────────────────────────────────────┘└────────────────────────────┘└────────────────────────────┘
-q: quit   r: refresh now   a: auto-refresh (off)   1-4: tabs   updated 0s ago   netcheck dev-396365d
+Online   q: quit   r: refresh now   a: auto-refresh (off)   1-4: tabs   updated 0s ago   netcheck dev-396365d
 ```
 
 **NetCheck.app**:
@@ -116,6 +116,8 @@ netcheck status                              # full snapshot as JSON
 netcheck interfaces
 netcheck dns
 netcheck vpn
+netcheck captive                             # captive-portal status as JSON
+netcheck connection                          # connection confidence as JSON
 netcheck ping 1.1.1.1 8.8.8.8
 netcheck resolve google.com github.com
 netcheck connect amazon.com microsoft.com --port 443
@@ -126,6 +128,11 @@ netcheck connect amazon.com microsoft.com --port 443
 The native app and the dashboard both auto-refresh every 5 seconds (off by
 default — toggle with `a` in the dashboard); subcommands run on demand and
 are meant for scripting/piping into `jq`.
+
+Each status collection — every CLI `status`/`stream` call, and every
+dashboard auto-refresh — includes a plain HTTP (not HTTPS) request to
+`captive.apple.com`, the same captive-portal-check endpoint macOS itself
+uses, to determine whether the network is behind a captive portal.
 
 NetCheck.app uses Cmd-modified shortcuts instead — `q` to quit, `⌘R` to
 refresh, `⌘A` to toggle auto-refresh, `⌘1`-`⌘4` to switch tabs — shown in

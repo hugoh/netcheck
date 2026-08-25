@@ -14,3 +14,4 @@ serde_json = "1.0.151"
 surge-ping = "0.9.0"
 system-configuration = "0.8.0"
 tokio = { version = "1.53.1", features = ["macros", "net", "rt", "time"] }
+ureq = { version = "3.4.0", default-features = false }

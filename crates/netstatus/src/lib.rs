@@ -1,3 +1,4 @@
+mod captive_portal;
 mod concurrent;
 mod connect;
 mod dns;
@@ -16,6 +17,7 @@ mod wifi;
 /// local builds. See `build.rs`.
 pub const VERSION: &str = env!("NETCHECK_VERSION");
 
+pub use captive_portal::{CaptivePortalStatus, check_captive_portal};
 pub use connect::{ConnectResult, connect, connect_all};
 pub use dns::{Resolver, has_split_dns, list_resolvers, vpn_scoped_domains};
 pub use interfaces::{
@@ -26,8 +28,8 @@ pub use proxy::{ProxyConfig, ProxyEndpoint, proxy_config};
 pub use reachability::{PingResult, ping, ping_all};
 pub use resolution::{DEFAULT_RESOLUTION_TARGETS, ResolutionResult, resolve, resolve_all};
 pub use status::{
-    DEFAULT_PING_TARGETS, DEFAULT_PING_TARGETS_V6, NetworkStatus, PartialStatus, StatusField,
-    collect, collect_streaming,
+    ConnectionConfidence, DEFAULT_PING_TARGETS, DEFAULT_PING_TARGETS_V6, NetworkStatus,
+    PartialStatus, StatusField, collect, collect_streaming, confidence_only,
 };
 pub use vpn::{VpnStatus, vpn_status};
 pub use wifi::{WifiIdentity, WifiRadio, WifiStatus, wifi_identity, wifi_radio, wifi_status};

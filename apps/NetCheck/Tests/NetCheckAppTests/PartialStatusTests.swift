@@ -91,9 +91,64 @@ struct PartialNetworkStatusTests {
         #expect(status.splitDns == false)
     }
 
+    @Test func mergeSetsCaptivePortalFromEnvelope() {
+        var status = PartialNetworkStatus()
+        let json: [String: Any] = ["CaptivePortal": "Detected"]
+        let data = try! JSONSerialization.data(withJSONObject: json)
+        let envelope = try! JSONDecoder().decode(StatusFieldEnvelope.self, from: data)
+        status.merge(envelope)
+        #expect(status.captivePortal == .detected)
+    }
+
     private func envelope(splitDns: Bool?) -> StatusFieldEnvelope {
         let json: [String: Any] = splitDns.map { ["SplitDns": $0] } ?? [:]
         let data = try! JSONSerialization.data(withJSONObject: json)
         return try! JSONDecoder().decode(StatusFieldEnvelope.self, from: data)
+    }
+}
+
+struct ConnectionConfidenceTests {
+    private func status(
+        dnsOk: Bool,
+        pingOk: Bool,
+        tcpOk: Bool
+    ) -> PartialNetworkStatus {
+        var status = PartialNetworkStatus()
+        status.resolution = [ResolutionResult(domain: "example.com", resolved: dnsOk, addresses: [], durationMs: nil)]
+        status.reachability = [PingResult(target: "1.1.1.1", reachable: pingOk, rttMs: nil)]
+        status.reachabilityV6 = [PingResult(target: "::1", reachable: false, rttMs: nil)]
+        status.domainReachability = [ConnectResult(target: "example.com", port: 443, reachable: tcpOk, rttMs: nil)]
+        return status
+    }
+
+    @Test func nilWhenSignalsMissing() {
+        #expect(PartialNetworkStatus().confidence == nil)
+    }
+
+    @Test func onlineWhenAllSignalsOk() {
+        #expect(status(dnsOk: true, pingOk: true, tcpOk: true).confidence == .online)
+    }
+
+    @Test func onlineWhenTwoSignalsOk() {
+        #expect(status(dnsOk: true, pingOk: true, tcpOk: false).confidence == .online)
+        #expect(status(dnsOk: true, pingOk: false, tcpOk: true).confidence == .online)
+        #expect(status(dnsOk: false, pingOk: true, tcpOk: true).confidence == .online)
+    }
+
+    @Test func limitedWhenOneSignalOk() {
+        #expect(status(dnsOk: true, pingOk: false, tcpOk: false).confidence == .limited)
+    }
+
+    @Test func offlineWhenNoSignalsOk() {
+        #expect(status(dnsOk: false, pingOk: false, tcpOk: false).confidence == .offline)
+    }
+
+    @Test func pingOkCountsV6OnlyReachability() {
+        var status = PartialNetworkStatus()
+        status.resolution = [ResolutionResult(domain: "example.com", resolved: false, addresses: [], durationMs: nil)]
+        status.reachability = [PingResult(target: "1.1.1.1", reachable: false, rttMs: nil)]
+        status.reachabilityV6 = [PingResult(target: "::1", reachable: true, rttMs: nil)]
+        status.domainReachability = [ConnectResult(target: "example.com", port: 443, reachable: false, rttMs: nil)]
+        #expect(status.confidence == .limited)
     }
 }
