@@ -29,4 +29,6 @@ done
 echo "Building .icns..."
 iconutil -c icns "$ICONSET_DIR" -o "$ASSETS_DIR/AppIcon.icns"
 
+cat "$ROOT_DIR/scripts/gen_icon.swift" "${BASH_SOURCE[0]}" | shasum -a 256 | awk '{print $1}' >"$ASSETS_DIR/.icon-source.sha256"
+
 echo "Done: $ASSETS_DIR/icon-1024.png, $ASSETS_DIR/AppIcon.icns"

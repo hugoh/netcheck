@@ -4,46 +4,17 @@ import "package://github.com/hugoh/hk-config/releases/download/v1.4.1/hk-config@
 
 min_hk_version = Base.min_hk_version
 
-// cargo_fmt/cargo_clippy/cargo_test are excluded from the `ci` profile: CI
-// runs `hk check --profile ci` on a cheap ubuntu runner for the
-// language-agnostic lint sweep only, and checks Rust itself directly (with
-// the toolchain already present) in the macOS build/test job instead of
-// installing Rust a second time just for hk. Local `pre-commit`/`pre-push`
-// (no --profile flag) still run all three for full local coverage.
+// No cargo_* steps run through hk at all: they're slow (full Rust build/
+// dependency-graph work), and CI's macOS `check` job already runs them
+// directly via `mise run check:cargo-fmt`, `check:cargo-clippy`,
+// `check:cargo-deny`, `check:cargo-audit`, and `test:rust` (see ci.yml),
+// with the toolchain already present. hk's ubuntu `ci` profile stays
+// language-agnostic, and local hk hooks skip them too — run those mise
+// tasks directly (or let CI catch it) instead of waiting on them for every
+// commit/push.
 local linters = new Mapping<String, Step> {
     ...Base.base
     ...Base.shell
-    ["cargo_fmt"] = {
-        glob = List("**/*.rs")
-        check = "mise run check:cargo-fmt"
-        fix = "cargo fmt --all"
-        profiles = List("!ci")
-    }
-    ["cargo_clippy"] = {
-        glob = List("**/*.rs", "**/Cargo.toml")
-        check = "mise run check:cargo-clippy"
-        profiles = List("!ci")
-    }
-    ["cargo_test"] = {
-        glob = List("**/*.rs", "**/Cargo.toml")
-        check = "mise run check:cargo-test"
-        profiles = List("!ci")
-    }
-    // Deny-listed licenses/duplicate-version/unknown-source lints, config
-    // in deny.toml. Excluded from `ci` for the same reason as
-    // cargo_fmt/cargo_clippy/cargo_test: CI's ubuntu lint job doesn't have
-    // the Rust toolchain (or these cargo subcommands) installed.
-    ["cargo_deny"] = {
-        glob = List("**/Cargo.toml", "**/Cargo.lock", "deny.toml")
-        check = "mise run check:cargo-deny"
-        profiles = List("!ci")
-    }
-    // RustSec advisory-database scan against Cargo.lock.
-    ["cargo_audit"] = {
-        glob = List("**/Cargo.lock")
-        check = "mise run check:cargo-audit"
-        profiles = List("!ci")
-    }
     // Plain `cog check` (whole history), not `--from-latest-tag`: this repo
     // has no release tag yet, and `--from-latest-tag` hard-errors with
     // "unable to get any tag" until one exists. Cheap to check full history

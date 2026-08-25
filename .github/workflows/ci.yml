@@ -55,7 +55,7 @@ jobs:
       - name: Cargo clippy
         run: mise run check:cargo-clippy
       - name: Cargo test
-        run: mise run check:cargo-test
+        run: mise run test:rust
       - name: Cargo deny
         run: mise run check:cargo-deny
       - name: Cargo audit
@@ -68,7 +68,7 @@ jobs:
           restore-keys: |
             swift-build-${{ runner.os }}-
       - name: Swift test
-        run: mise run check:swift-test
+        run: mise run test:swift
 
   # Release build + app bundle. `mise run bundle:swiftui` builds the release
   # netcheck CLI and the SwiftUI app itself (it doesn't reuse anything from

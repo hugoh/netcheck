@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Check licenses/duplicate-versions/unknown-sources via cargo-deny"
+#MISE sources=["**/Cargo.toml", "Cargo.lock", "deny.toml"]
+#MISE outputs={auto=true}
+set -euo pipefail
+
+cargo deny check

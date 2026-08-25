@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Lint Rust with clippy"
+#MISE sources=["**/*.rs", "**/Cargo.toml", "Cargo.lock"]
+#MISE outputs={auto=true}
+set -euo pipefail
+
+cargo clippy --workspace --all-targets --all-features -- -D warnings

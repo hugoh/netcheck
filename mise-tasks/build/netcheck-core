@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Build the slim netcheck-core binary (JSON subcommands only, no TUI deps — used by NetCheck.app; pass --release for a release build)"
+set -euo pipefail
+
+cargo build -p netcheck --bin netcheck-core "$@"
