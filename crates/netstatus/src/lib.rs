@@ -1,3 +1,4 @@
+mod captive_portal;
 mod concurrent;
 mod connect;
 mod dns;
@@ -16,6 +17,7 @@ mod wifi;
 /// local builds. See `build.rs`.
 pub const VERSION: &str = env!("NETCHECK_VERSION");
 
+pub use captive_portal::{CaptivePortalStatus, check_captive_portal};
 pub use connect::{ConnectResult, connect, connect_all};
 pub use dns::{Resolver, has_split_dns, list_resolvers, vpn_scoped_domains};
 pub use interfaces::{
