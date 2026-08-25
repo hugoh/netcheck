@@ -120,13 +120,13 @@ struct ContentView: View {
 
     private var footer: some View {
         HStack(spacing: 12) {
-            Text(Self.appVersion)
-                .foregroundStyle(.secondary)
-
             if let confidence = fetcher.status.confidence {
                 Label(confidence.label, systemImage: confidence.icon)
                     .foregroundStyle(confidence.color)
             }
+
+            Text(Self.appVersion)
+                .foregroundStyle(.secondary)
 
             if fetcher.status.captivePortal == .detected {
                 Label("Captive portal", systemImage: "exclamationmark.triangle.fill")
