@@ -1,3 +1,4 @@
+use crate::captive_portal::{self, CaptivePortalStatus};
 use crate::connect::{self, ConnectResult};
 use crate::dns::{self, Resolver};
 use crate::interfaces::{self, Interface};
@@ -49,6 +50,7 @@ pub struct NetworkStatus {
     pub proxy: ProxyConfig,
     pub wifi: WifiStatus,
     pub ip_stack: IpStack,
+    pub captive_portal: CaptivePortalStatus,
 }
 
 /// How confident netcheck is that the machine has a working internet
@@ -101,6 +103,7 @@ pub fn collect() -> NetworkStatus {
             scope.spawn(|| connect::connect_all(DEFAULT_RESOLUTION_TARGETS, 443));
         let proxy_handle = scope.spawn(proxy::proxy_config);
         let wifi_handle = scope.spawn(wifi::wifi_status);
+        let captive_portal_handle = scope.spawn(captive_portal::check_captive_portal);
 
         let interfaces = interfaces_handle.join().unwrap();
         let vpn = vpn::vpn_status(&interfaces);
@@ -115,6 +118,7 @@ pub fn collect() -> NetworkStatus {
             domain_reachability: domain_reachability_handle.join().unwrap(),
             proxy: proxy_handle.join().unwrap(),
             wifi: wifi_handle.join().unwrap(),
+            captive_portal: captive_portal_handle.join().unwrap(),
             interfaces,
             vpn,
             resolvers,
@@ -140,6 +144,7 @@ pub enum StatusField {
     WifiIdentity(WifiIdentity),
     WifiRadio(WifiRadio),
     IpStack(IpStack),
+    CaptivePortal(CaptivePortalStatus),
 }
 
 /// Runs every probe concurrently and sends each `StatusField` down `tx` the
@@ -194,6 +199,9 @@ pub fn collect_streaming(tx: mpsc::Sender<StatusField>) {
         scope.spawn(|| {
             let _ = tx.send(StatusField::WifiIdentity(wifi::wifi_identity()));
         });
+        scope.spawn(|| {
+            let _ = tx.send(StatusField::CaptivePortal(captive_portal::check_captive_portal()));
+        });
     });
 }
 
@@ -215,6 +223,7 @@ pub struct PartialStatus {
     pub wifi_identity: Option<WifiIdentity>,
     pub wifi_radio: Option<WifiRadio>,
     pub ip_stack: Option<IpStack>,
+    pub captive_portal: Option<CaptivePortalStatus>,
 }
 
 impl PartialStatus {
@@ -232,6 +241,7 @@ impl PartialStatus {
             StatusField::WifiIdentity(v) => self.wifi_identity = Some(v),
             StatusField::WifiRadio(v) => self.wifi_radio = Some(v),
             StatusField::IpStack(v) => self.ip_stack = Some(v),
+            StatusField::CaptivePortal(v) => self.captive_portal = Some(v),
         }
     }
 
@@ -248,6 +258,7 @@ impl PartialStatus {
             || self.wifi_identity.is_some()
             || self.wifi_radio.is_some()
             || self.ip_stack.is_some()
+            || self.captive_portal.is_some()
     }
 
     /// `None` until resolution, both reachability probes, and domain
@@ -291,12 +302,12 @@ mod tests {
         let received: Vec<StatusField> = rx.into_iter().collect();
         assert_eq!(
             received.len(),
-            12,
-            "expected exactly 12 StatusField messages, got {}: {received:?}",
+            13,
+            "expected exactly 13 StatusField messages, got {}: {received:?}",
             received.len()
         );
 
-        let all_variants: [StatusField; 12] = [
+        let all_variants: [StatusField; 13] = [
             StatusField::Interfaces(Vec::new()),
             StatusField::Vpn(VpnStatus {
                 tunnels: Vec::new(),
@@ -333,6 +344,7 @@ mod tests {
             StatusField::WifiIdentity(WifiIdentity::default()),
             StatusField::WifiRadio(WifiRadio::default()),
             StatusField::IpStack(IpStack::None),
+            StatusField::CaptivePortal(crate::captive_portal::CaptivePortalStatus::Unknown),
         ];
 
         let mut seen: HashSet<usize> = HashSet::new();
