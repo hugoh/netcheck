@@ -601,13 +601,28 @@ fn draw(
             .map(|t| format!("updated {} ago", format_age(t.elapsed())))
             .unwrap_or_default();
         let auto_state = if auto_refresh { "on, every 5s" } else { "off" };
-        frame.render_widget(
-            Paragraph::new(format!(
-                "q: quit   r: refresh now   a: auto-refresh ({auto_state})   1-4: tabs   {age}   netcheck {}",
-                netstatus::VERSION
-            )),
-            rows[2],
-        );
+
+        let (confidence_label, confidence_color) = match status.confidence() {
+            Some(netstatus::ConnectionConfidence::Online) => ("Online", Color::Green),
+            Some(netstatus::ConnectionConfidence::Limited) => ("Limited", Color::Yellow),
+            Some(netstatus::ConnectionConfidence::Offline) => ("Offline", Color::Red),
+            None => ("collecting...", Color::DarkGray),
+        };
+        let mut footer_spans = vec![Span::styled(
+            format!("{confidence_label}   "),
+            Style::default().fg(confidence_color),
+        )];
+        if status.captive_portal == Some(netstatus::CaptivePortalStatus::Detected) {
+            footer_spans.push(Span::styled(
+                "Captive portal detected   ",
+                Style::default().fg(Color::Yellow),
+            ));
+        }
+        footer_spans.push(Span::raw(format!(
+            "q: quit   r: refresh now   a: auto-refresh ({auto_state})   1-4: tabs   {age}   netcheck {}",
+            netstatus::VERSION
+        )));
+        frame.render_widget(Paragraph::new(Line::from(footer_spans)), rows[2]);
     })?;
     Ok(())
 }
