@@ -1,0 +1,10 @@
+seconds	magnitude	unit
+0	0	now
+2	0	now
+3	3	s
+59	59	s
+60	1	m
+125	2	m
+3599	59	m
+3600	1	h
+18180	5	h

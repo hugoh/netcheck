@@ -680,29 +680,26 @@ mod tests {
         );
     }
 
+    /// Cases shared with the SwiftUI app's FooterFormattingTests, so both
+    /// UIs agree on the now/seconds/minutes/hours thresholds.
     #[test]
-    fn format_age_shows_now_under_three_seconds() {
-        assert_eq!(format_age(Duration::from_secs(0)), "now");
-        assert_eq!(format_age(Duration::from_secs(2)), "now");
-    }
-
-    #[test]
-    fn format_age_shows_seconds_under_a_minute() {
-        assert_eq!(format_age(Duration::from_secs(3)), "3s");
-        assert_eq!(format_age(Duration::from_secs(59)), "59s");
-    }
-
-    #[test]
-    fn format_age_shows_minutes_at_and_above_a_minute() {
-        assert_eq!(format_age(Duration::from_secs(60)), "1m");
-        assert_eq!(format_age(Duration::from_secs(125)), "2m");
-    }
-
-    #[test]
-    fn format_age_shows_hours_at_five_hours_three_minutes() {
-        assert_eq!(
-            format_age(Duration::from_secs(5 * 3600 + 3 * 60)),
-            "5h"
-        );
+    fn format_age_matches_shared_fixture() {
+        let fixture = include_str!("../../../testdata/age-format-cases.tsv");
+        for line in fixture.lines().skip(1) {
+            let mut cols = line.split('\t');
+            let seconds: u64 = cols.next().unwrap().parse().unwrap();
+            let magnitude: u64 = cols.next().unwrap().parse().unwrap();
+            let unit = cols.next().unwrap();
+            let expected = if unit == "now" {
+                "now".to_string()
+            } else {
+                format!("{magnitude}{unit}")
+            };
+            assert_eq!(
+                format_age(Duration::from_secs(seconds)),
+                expected,
+                "seconds={seconds}"
+            );
+        }
     }
 }

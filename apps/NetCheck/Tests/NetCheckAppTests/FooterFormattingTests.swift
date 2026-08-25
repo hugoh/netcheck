@@ -2,45 +2,49 @@ import Foundation
 import Testing
 @testable import NetCheckApp
 
+/// One row of testdata/age-format-cases.tsv, shared with the Rust TUI's
+/// format_age tests so both UIs agree on the now/seconds/minutes/hours
+/// thresholds.
+private struct AgeFormatCase {
+    let seconds: TimeInterval
+    let magnitude: Int
+    let unit: String
+
+    var expectedText: String {
+        switch unit {
+        case "now": return "Updated just now"
+        case "s": return "Updated \(magnitude) second\(magnitude == 1 ? "" : "s") ago"
+        case "m": return "Updated \(magnitude) minute\(magnitude == 1 ? "" : "s") ago"
+        case "h": return "Updated \(magnitude) hour\(magnitude == 1 ? "" : "s") ago"
+        default: fatalError("unknown unit \(unit)")
+        }
+    }
+}
+
+private func loadAgeFormatCases() -> [AgeFormatCase] {
+    let fixtureURL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent() // FooterFormattingTests.swift
+        .deletingLastPathComponent() // NetCheckAppTests
+        .deletingLastPathComponent() // Tests
+        .deletingLastPathComponent() // NetCheck
+        .deletingLastPathComponent() // apps
+        .appendingPathComponent("testdata/age-format-cases.tsv")
+    let contents = try! String(contentsOf: fixtureURL, encoding: .utf8)
+    return contents.split(separator: "\n").dropFirst().map { line in
+        let cols = line.split(separator: "\t")
+        return AgeFormatCase(seconds: TimeInterval(cols[0])!, magnitude: Int(cols[1])!, unit: String(cols[2]))
+    }
+}
+
 struct FooterFormattingTests {
-    @Test func showsSecondsStartingAtThreeSeconds() {
+    @Test func matchesSharedFixture() {
         let updated = Date(timeIntervalSince1970: 0)
-        let now = updated.addingTimeInterval(3)
-        #expect(updatedAgoText(now: now, updated: updated) == "Updated 3 seconds ago")
-    }
-
-    @Test func showsPluralSecondsUnderOneMinute() {
-        let updated = Date(timeIntervalSince1970: 0)
-        let now = updated.addingTimeInterval(45)
-        #expect(updatedAgoText(now: now, updated: updated) == "Updated 45 seconds ago")
-    }
-
-    @Test func hidesSecondsAtSixtySeconds() {
-        let updated = Date(timeIntervalSince1970: 0)
-        let now = updated.addingTimeInterval(60)
-        #expect(updatedAgoText(now: now, updated: updated) == "Updated 1 minute ago")
-    }
-
-    @Test func hidesSecondsAboveOneMinute() {
-        let updated = Date(timeIntervalSince1970: 0)
-        let now = updated.addingTimeInterval(125)
-        #expect(updatedAgoText(now: now, updated: updated) == "Updated 2 minutes ago")
-    }
-
-    @Test func showsJustNowAtZeroSeconds() {
-        let updated = Date(timeIntervalSince1970: 0)
-        #expect(updatedAgoText(now: updated, updated: updated) == "Updated just now")
-    }
-
-    @Test func showsJustNowUnderThreeSeconds() {
-        let updated = Date(timeIntervalSince1970: 0)
-        let now = updated.addingTimeInterval(2)
-        #expect(updatedAgoText(now: now, updated: updated) == "Updated just now")
-    }
-
-    @Test func hidesMinutesAtFiveHoursThreeMinutes() {
-        let updated = Date(timeIntervalSince1970: 0)
-        let now = updated.addingTimeInterval(5 * 3600 + 3 * 60)
-        #expect(updatedAgoText(now: now, updated: updated) == "Updated 5 hours ago")
+        for testCase in loadAgeFormatCases() {
+            let now = updated.addingTimeInterval(testCase.seconds)
+            #expect(
+                updatedAgoText(now: now, updated: updated) == testCase.expectedText,
+                "seconds=\(testCase.seconds)"
+            )
+        }
     }
 }
