@@ -70,7 +70,6 @@ fn render_body(readme: &str) -> String {
     options.extension.table = true;
     options.extension.alerts = true;
     options.extension.header_id_prefix = Some(String::new());
-    options.render.r#unsafe = true;
 
     let html = markdown_to_html(&readme, &options);
 

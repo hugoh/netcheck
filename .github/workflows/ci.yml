@@ -69,6 +69,8 @@ jobs:
             swift-build-${{ runner.os }}-
       - name: Swift test
         run: mise run test:swift
+      - name: Icon up-to-date
+        run: mise run check:icon
 
   # Release build + app bundle. `mise run bundle:swiftui` builds the release
   # netcheck CLI and the SwiftUI app itself (it doesn't reuse anything from

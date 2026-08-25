@@ -1,4 +1,4 @@
-# <img src="assets/icon-1024.png" width="32" height="32" alt=""> netcheck
+# ![netcheck icon](assets/icon-1024.png) netcheck
 
 A holistic view of network status on macOS: interfaces, VPN/tunnel state,
 DNS resolvers (including split-tunnel/split-DNS), and reachability — the
