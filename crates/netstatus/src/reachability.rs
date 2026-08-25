@@ -12,7 +12,7 @@ pub struct PingResult {
 }
 
 const PING_PAYLOAD: [u8; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
-const PING_TIMEOUT: Duration = Duration::from_secs(1);
+const PING_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Sends one ICMP echo request via a native, unprivileged ICMP/DGRAM socket
 /// (no `ping`/`ping6` subprocess), bounded to `PING_TIMEOUT`. `surge_ping`
