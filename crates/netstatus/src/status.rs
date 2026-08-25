@@ -88,9 +88,12 @@ impl NetworkStatus {
 }
 
 /// Collects a full network status snapshot. Shells out to `scutil`,
-/// `ping`, and `system_profiler`, and resolves DNS; independent probes run
-/// concurrently, so this takes roughly as long as the slowest single probe
-/// (typically the Wi-Fi lookup, ~1s) rather than their sum.
+/// `ping`, and `system_profiler`, resolves DNS, and probes for a captive
+/// portal; independent probes run concurrently, so this takes roughly as
+/// long as the slowest single probe rather than their sum. Most probes
+/// (e.g. the Wi-Fi lookup) typically finish within ~1s, but the
+/// captive-portal probe has a 10s timeout, making it the worst-case bound
+/// on a slow or unresponsive network.
 pub fn collect() -> NetworkStatus {
     std::thread::scope(|scope| {
         let interfaces_handle = scope.spawn(interfaces::list_interfaces);
@@ -200,7 +203,9 @@ pub fn collect_streaming(tx: mpsc::Sender<StatusField>) {
             let _ = tx.send(StatusField::WifiIdentity(wifi::wifi_identity()));
         });
         scope.spawn(|| {
-            let _ = tx.send(StatusField::CaptivePortal(captive_portal::check_captive_portal()));
+            let _ = tx.send(StatusField::CaptivePortal(
+                captive_portal::check_captive_portal(),
+            ));
         });
     });
 }
@@ -271,8 +276,8 @@ impl PartialStatus {
         let reachability_v6 = self.reachability_v6.as_ref()?;
         let domain_reachability = self.domain_reachability.as_ref()?;
         let dns_ok = resolution.iter().any(|r| r.resolved);
-        let ping_ok = reachability.iter().any(|p| p.reachable)
-            || reachability_v6.iter().any(|p| p.reachable);
+        let ping_ok =
+            reachability.iter().any(|p| p.reachable) || reachability_v6.iter().any(|p| p.reachable);
         let tcp_ok = domain_reachability.iter().any(|c| c.reachable);
         Some(confidence_from(dns_ok, ping_ok, tcp_ok))
     }
@@ -367,25 +372,49 @@ mod tests {
 
     #[test]
     fn confidence_from_all_signals_ok_is_online() {
-        assert_eq!(confidence_from(true, true, true), ConnectionConfidence::Online);
+        assert_eq!(
+            confidence_from(true, true, true),
+            ConnectionConfidence::Online
+        );
     }
 
     #[test]
     fn confidence_from_two_signals_ok_is_online() {
-        assert_eq!(confidence_from(true, true, false), ConnectionConfidence::Online);
-        assert_eq!(confidence_from(true, false, true), ConnectionConfidence::Online);
-        assert_eq!(confidence_from(false, true, true), ConnectionConfidence::Online);
+        assert_eq!(
+            confidence_from(true, true, false),
+            ConnectionConfidence::Online
+        );
+        assert_eq!(
+            confidence_from(true, false, true),
+            ConnectionConfidence::Online
+        );
+        assert_eq!(
+            confidence_from(false, true, true),
+            ConnectionConfidence::Online
+        );
     }
 
     #[test]
     fn confidence_from_one_signal_ok_is_limited() {
-        assert_eq!(confidence_from(true, false, false), ConnectionConfidence::Limited);
-        assert_eq!(confidence_from(false, true, false), ConnectionConfidence::Limited);
-        assert_eq!(confidence_from(false, false, true), ConnectionConfidence::Limited);
+        assert_eq!(
+            confidence_from(true, false, false),
+            ConnectionConfidence::Limited
+        );
+        assert_eq!(
+            confidence_from(false, true, false),
+            ConnectionConfidence::Limited
+        );
+        assert_eq!(
+            confidence_from(false, false, true),
+            ConnectionConfidence::Limited
+        );
     }
 
     #[test]
     fn confidence_from_no_signals_ok_is_offline() {
-        assert_eq!(confidence_from(false, false, false), ConnectionConfidence::Offline);
+        assert_eq!(
+            confidence_from(false, false, false),
+            ConnectionConfidence::Offline
+        );
     }
 }

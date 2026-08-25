@@ -69,7 +69,10 @@ mod tests {
     #[test]
     fn altered_body_is_detected() {
         assert_eq!(
-            classify_response(200, "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Login required</BODY></HTML>"),
+            classify_response(
+                200,
+                "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Login required</BODY></HTML>"
+            ),
             CaptivePortalStatus::Detected
         );
     }

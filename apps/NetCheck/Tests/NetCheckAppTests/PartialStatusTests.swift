@@ -131,6 +131,8 @@ struct ConnectionConfidenceTests {
 
     @Test func onlineWhenTwoSignalsOk() {
         #expect(status(dnsOk: true, pingOk: true, tcpOk: false).confidence == .online)
+        #expect(status(dnsOk: true, pingOk: false, tcpOk: true).confidence == .online)
+        #expect(status(dnsOk: false, pingOk: true, tcpOk: true).confidence == .online)
     }
 
     @Test func limitedWhenOneSignalOk() {
@@ -139,5 +141,14 @@ struct ConnectionConfidenceTests {
 
     @Test func offlineWhenNoSignalsOk() {
         #expect(status(dnsOk: false, pingOk: false, tcpOk: false).confidence == .offline)
+    }
+
+    @Test func pingOkCountsV6OnlyReachability() {
+        var status = PartialNetworkStatus()
+        status.resolution = [ResolutionResult(domain: "example.com", resolved: false, addresses: [], durationMs: nil)]
+        status.reachability = [PingResult(target: "1.1.1.1", reachable: false, rttMs: nil)]
+        status.reachabilityV6 = [PingResult(target: "::1", reachable: true, rttMs: nil)]
+        status.domainReachability = [ConnectResult(target: "example.com", port: 443, reachable: false, rttMs: nil)]
+        #expect(status.confidence == .limited)
     }
 }
