@@ -14,6 +14,7 @@ final class StatusFetcher: ObservableObject {
 
     private var timer: Timer?
     private var refreshTask: Task<Void, Never>?
+    private var refreshGeneration = 0
     private let binaryURL: URL?
 
     init() {
@@ -43,12 +44,15 @@ final class StatusFetcher: ObservableObject {
         }
 
         refreshTask?.cancel()
+        refreshGeneration += 1
+        let generation = refreshGeneration
         refreshTask = Task {
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
 
             do {
                 for try await line in Self.streamLines(url: binaryURL, args: ["stream"]) {
+                    guard generation == refreshGeneration else { return }
                     guard !line.isEmpty, let data = line.data(using: .utf8) else { continue }
                     guard let envelope = try? decoder.decode(StatusFieldEnvelope.self, from: data) else {
                         continue
@@ -60,6 +64,7 @@ final class StatusFetcher: ObservableObject {
             } catch is CancellationError {
                 // Superseded by a newer refresh; nothing to report.
             } catch {
+                guard generation == refreshGeneration else { return }
                 errorMessage = "Failed to run netcheck: \(error.localizedDescription)"
             }
         }

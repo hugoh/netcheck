@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use std::io::{self, Stdout};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -93,35 +93,59 @@ fn tabs_line(active: Tab) -> Line<'static> {
     Line::from(spans)
 }
 
+/// Runs one `collect_streaming` pass and forwards each field to `tx`, but
+/// only as long as `generation` still matches `this_gen` — if a newer run
+/// (manual or auto) has started in the meantime, this run's remaining
+/// fields are dropped instead of overwriting fresher data.
+fn run_and_forward(tx: &mpsc::Sender<StatusField>, generation: &Arc<AtomicU64>, this_gen: u64) {
+    let (inner_tx, inner_rx) = mpsc::channel();
+    std::thread::spawn(move || netstatus::collect_streaming(inner_tx));
+    for field in inner_rx {
+        if generation.load(Ordering::SeqCst) == this_gen {
+            let _ = tx.send(field);
+        }
+    }
+}
+
 /// Spawns the background workers. Returns a receiver fed by both an initial
 /// one-shot collection, a periodic auto-refresh (gated by `auto_refresh`,
 /// off by default), and manual refreshes triggered via the returned sender.
+/// A shared generation counter ensures that if a manual and an auto-refresh
+/// run overlap, only the most recently started run's fields are merged.
 fn spawn_workers(auto_refresh: Arc<AtomicBool>) -> (mpsc::Receiver<StatusField>, mpsc::Sender<()>) {
     let (tx, rx) = mpsc::channel();
     let (manual_tx, manual_rx) = mpsc::channel::<()>();
+    let generation = Arc::new(AtomicU64::new(0));
 
     {
         let tx = tx.clone();
+        let generation = generation.clone();
         std::thread::spawn(move || {
             for () in manual_rx {
-                netstatus::collect_streaming(tx.clone());
+                let this_gen = generation.fetch_add(1, Ordering::SeqCst) + 1;
+                run_and_forward(&tx, &generation, this_gen);
             }
         });
     }
 
-    std::thread::spawn(move || {
-        netstatus::collect_streaming(tx.clone());
-        loop {
-            if auto_refresh.load(Ordering::Relaxed) {
-                std::thread::sleep(REFRESH_INTERVAL);
+    {
+        let generation = generation.clone();
+        std::thread::spawn(move || {
+            let this_gen = generation.fetch_add(1, Ordering::SeqCst) + 1;
+            run_and_forward(&tx, &generation, this_gen);
+            loop {
                 if auto_refresh.load(Ordering::Relaxed) {
-                    netstatus::collect_streaming(tx.clone());
+                    std::thread::sleep(REFRESH_INTERVAL);
+                    if auto_refresh.load(Ordering::Relaxed) {
+                        let this_gen = generation.fetch_add(1, Ordering::SeqCst) + 1;
+                        run_and_forward(&tx, &generation, this_gen);
+                    }
+                } else {
+                    std::thread::sleep(Duration::from_millis(200));
                 }
-            } else {
-                std::thread::sleep(Duration::from_millis(200));
             }
-        }
-    });
+        });
+    }
 
     (rx, manual_tx)
 }
