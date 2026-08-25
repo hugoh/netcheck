@@ -51,6 +51,40 @@ pub struct NetworkStatus {
     pub ip_stack: IpStack,
 }
 
+/// How confident netcheck is that the machine has a working internet
+/// connection, derived from three independent signal categories rather
+/// than any single probe (a host that blocks ICMP but serves DNS and TCP
+/// fine shouldn't read as offline).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub enum ConnectionConfidence {
+    Online,
+    Limited,
+    Offline,
+}
+
+/// Rolls up whether DNS resolution, ICMP reachability, and TCP connect
+/// each had at least one success into a single confidence tier. 3-of-3 or
+/// 2-of-3 categories succeeding means the connection is up even if one
+/// probe type is filtered somewhere on the path; 1-of-3 is a degraded
+/// connection; 0-of-3 is offline.
+fn confidence_from(dns_ok: bool, ping_ok: bool, tcp_ok: bool) -> ConnectionConfidence {
+    match [dns_ok, ping_ok, tcp_ok].iter().filter(|ok| **ok).count() {
+        3 | 2 => ConnectionConfidence::Online,
+        1 => ConnectionConfidence::Limited,
+        _ => ConnectionConfidence::Offline,
+    }
+}
+
+impl NetworkStatus {
+    pub fn confidence(&self) -> ConnectionConfidence {
+        let dns_ok = self.resolution.iter().any(|r| r.resolved);
+        let ping_ok = self.reachability.iter().any(|p| p.reachable)
+            || self.reachability_v6.iter().any(|p| p.reachable);
+        let tcp_ok = self.domain_reachability.iter().any(|c| c.reachable);
+        confidence_from(dns_ok, ping_ok, tcp_ok)
+    }
+}
+
 /// Collects a full network status snapshot. Shells out to `scutil`,
 /// `ping`, and `system_profiler`, and resolves DNS; independent probes run
 /// concurrently, so this takes roughly as long as the slowest single probe
@@ -215,6 +249,22 @@ impl PartialStatus {
             || self.wifi_radio.is_some()
             || self.ip_stack.is_some()
     }
+
+    /// `None` until resolution, both reachability probes, and domain
+    /// reachability have all arrived — a partial view of only some signal
+    /// categories would misreport confidence (e.g. reading `Limited` just
+    /// because DNS hasn't come back yet, not because it failed).
+    pub fn confidence(&self) -> Option<ConnectionConfidence> {
+        let resolution = self.resolution.as_ref()?;
+        let reachability = self.reachability.as_ref()?;
+        let reachability_v6 = self.reachability_v6.as_ref()?;
+        let domain_reachability = self.domain_reachability.as_ref()?;
+        let dns_ok = resolution.iter().any(|r| r.resolved);
+        let ping_ok = reachability.iter().any(|p| p.reachable)
+            || reachability_v6.iter().any(|p| p.reachable);
+        let tcp_ok = domain_reachability.iter().any(|c| c.reachable);
+        Some(confidence_from(dns_ok, ping_ok, tcp_ok))
+    }
 }
 
 #[cfg(test)]
@@ -301,5 +351,29 @@ mod tests {
             all_variants.len(),
             "not every StatusField variant was sent"
         );
+    }
+
+    #[test]
+    fn confidence_from_all_signals_ok_is_online() {
+        assert_eq!(confidence_from(true, true, true), ConnectionConfidence::Online);
+    }
+
+    #[test]
+    fn confidence_from_two_signals_ok_is_online() {
+        assert_eq!(confidence_from(true, true, false), ConnectionConfidence::Online);
+        assert_eq!(confidence_from(true, false, true), ConnectionConfidence::Online);
+        assert_eq!(confidence_from(false, true, true), ConnectionConfidence::Online);
+    }
+
+    #[test]
+    fn confidence_from_one_signal_ok_is_limited() {
+        assert_eq!(confidence_from(true, false, false), ConnectionConfidence::Limited);
+        assert_eq!(confidence_from(false, true, false), ConnectionConfidence::Limited);
+        assert_eq!(confidence_from(false, false, true), ConnectionConfidence::Limited);
+    }
+
+    #[test]
+    fn confidence_from_no_signals_ok_is_offline() {
+        assert_eq!(confidence_from(false, false, false), ConnectionConfidence::Offline);
     }
 }
