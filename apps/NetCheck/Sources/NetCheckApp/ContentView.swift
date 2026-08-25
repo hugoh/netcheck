@@ -131,8 +131,10 @@ struct ContentView: View {
             .keyboardShortcut("a", modifiers: [.command])
 
             if let updated = fetcher.lastUpdated {
-                Text("Updated \(updated, style: .relative) ago")
-                    .foregroundStyle(.secondary)
+                TimelineView(.periodic(from: updated, by: 1)) { context in
+                    Text(updatedAgoText(now: context.date, updated: updated))
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .padding(.horizontal, 12)
