@@ -123,6 +123,16 @@ struct ContentView: View {
             Text(Self.appVersion)
                 .foregroundStyle(.secondary)
 
+            if let confidence = fetcher.status.confidence {
+                Label(confidence.label, systemImage: confidence.icon)
+                    .foregroundStyle(confidence.color)
+            }
+
+            if fetcher.status.captivePortal == .detected {
+                Label("Captive portal", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.yellow)
+            }
+
             Spacer()
 
             Toggle(isOn: Binding(get: { fetcher.autoRefreshEnabled }, set: { _ in fetcher.toggleAutoRefresh() })) {

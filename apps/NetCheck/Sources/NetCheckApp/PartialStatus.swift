@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// Mirrors `netstatus::dns::vpn_scoped_domains` (Rust) — domains only
 /// resolvable via a VPN tunnel's own resolver.
@@ -100,6 +101,32 @@ enum ConnectionConfidence {
     case online
     case limited
     case offline
+}
+
+extension ConnectionConfidence {
+    var label: String {
+        switch self {
+        case .online: return "Online"
+        case .limited: return "Limited"
+        case .offline: return "Offline"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .online: return "checkmark.circle.fill"
+        case .limited: return "exclamationmark.circle.fill"
+        case .offline: return "xmark.circle.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .online: return .green
+        case .limited: return .yellow
+        case .offline: return .red
+        }
+    }
 }
 
 /// Rolls up whether DNS resolution, ICMP reachability, and TCP connect
