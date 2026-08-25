@@ -56,7 +56,10 @@ pub struct NetworkStatus {
 /// How confident netcheck is that the machine has a working internet
 /// connection, derived from three independent signal categories rather
 /// than any single probe (a host that blocks ICMP but serves DNS and TCP
-/// fine shouldn't read as offline).
+/// fine shouldn't read as offline). Capped at `Limited` when a captive
+/// portal is confirmed present, regardless of how the three categories
+/// vote — a portal means the user isn't actually on the internet even if
+/// DNS/ping/TCP all reach the portal's own infrastructure.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub enum ConnectionConfidence {
     Online,
@@ -64,11 +67,20 @@ pub enum ConnectionConfidence {
     Offline,
 }
 
+/// True if more than half of `results` satisfy `is_ok`. A single lucky
+/// reply from an otherwise-unreachable target list shouldn't count as a
+/// category "working" — this requires the majority of probed targets to
+/// agree. Empty lists are never ok.
+fn majority_ok<T>(results: &[T], is_ok: impl Fn(&T) -> bool) -> bool {
+    let n = results.len();
+    n > 0 && results.iter().filter(|r| is_ok(r)).count() * 2 > n
+}
+
 /// Rolls up whether DNS resolution, ICMP reachability, and TCP connect
-/// each had at least one success into a single confidence tier. 3-of-3 or
-/// 2-of-3 categories succeeding means the connection is up even if one
-/// probe type is filtered somewhere on the path; 1-of-3 is a degraded
-/// connection; 0-of-3 is offline.
+/// each had a majority of their probed targets succeed into a single
+/// confidence tier. 3-of-3 or 2-of-3 categories succeeding means the
+/// connection is up even if one probe type is filtered somewhere on the
+/// path; 1-of-3 is a degraded connection; 0-of-3 is offline.
 fn confidence_from(dns_ok: bool, ping_ok: bool, tcp_ok: bool) -> ConnectionConfidence {
     match [dns_ok, ping_ok, tcp_ok].iter().filter(|ok| **ok).count() {
         3 | 2 => ConnectionConfidence::Online,
@@ -77,13 +89,31 @@ fn confidence_from(dns_ok: bool, ping_ok: bool, tcp_ok: bool) -> ConnectionConfi
     }
 }
 
+/// Caps `confidence` at `Limited` when `captive_portal` confirms a portal
+/// is present. `Unknown` (the probe didn't get a conclusive answer) is not
+/// evidence of a portal, so it doesn't trigger the cap.
+fn cap_for_captive_portal(
+    confidence: ConnectionConfidence,
+    captive_portal: CaptivePortalStatus,
+) -> ConnectionConfidence {
+    if captive_portal == CaptivePortalStatus::Detected && confidence == ConnectionConfidence::Online
+    {
+        ConnectionConfidence::Limited
+    } else {
+        confidence
+    }
+}
+
 impl NetworkStatus {
     pub fn confidence(&self) -> ConnectionConfidence {
-        let dns_ok = self.resolution.iter().any(|r| r.resolved);
-        let ping_ok = self.reachability.iter().any(|p| p.reachable)
-            || self.reachability_v6.iter().any(|p| p.reachable);
-        let tcp_ok = self.domain_reachability.iter().any(|c| c.reachable);
-        confidence_from(dns_ok, ping_ok, tcp_ok)
+        let dns_ok = majority_ok(&self.resolution, |r| r.resolved);
+        let ping_ok = majority_ok(&self.reachability, |p| p.reachable)
+            || majority_ok(&self.reachability_v6, |p| p.reachable);
+        let tcp_ok = majority_ok(&self.domain_reachability, |c| c.reachable);
+        cap_for_captive_portal(
+            confidence_from(dns_ok, ping_ok, tcp_ok),
+            self.captive_portal,
+        )
     }
 }
 
@@ -119,10 +149,10 @@ impl CoreSignals {
     }
 
     fn confidence(&self) -> ConnectionConfidence {
-        let dns_ok = self.resolution.iter().any(|r| r.resolved);
-        let ping_ok = self.reachability.iter().any(|p| p.reachable)
-            || self.reachability_v6.iter().any(|p| p.reachable);
-        let tcp_ok = self.domain_reachability.iter().any(|c| c.reachable);
+        let dns_ok = majority_ok(&self.resolution, |r| r.resolved);
+        let ping_ok = majority_ok(&self.reachability, |p| p.reachable)
+            || majority_ok(&self.reachability_v6, |p| p.reachable);
+        let tcp_ok = majority_ok(&self.domain_reachability, |c| c.reachable);
         confidence_from(dns_ok, ping_ok, tcp_ok)
     }
 }
@@ -130,8 +160,10 @@ impl CoreSignals {
 /// Derives connection confidence from only the three signal categories it
 /// needs — DNS resolution, ICMP reachability (v4+v6), TCP connect —
 /// skipping everything else `collect()` runs (Wi-Fi, proxy, interfaces,
-/// VPN, and the captive-portal probe). Use this instead of
-/// `collect().confidence()` when only the confidence tier is needed.
+/// VPN, and the captive-portal probe). This is a known accuracy tradeoff
+/// for speed: unlike `NetworkStatus::confidence()`, this path can't apply
+/// the captive-portal cap, since it never probes for one. Use this instead
+/// of `collect().confidence()` when only the confidence tier is needed.
 pub fn confidence_only() -> ConnectionConfidence {
     CoreSignals::collect().confidence()
 }
@@ -311,20 +343,26 @@ impl PartialStatus {
             || self.captive_portal.is_some()
     }
 
-    /// `None` until resolution, both reachability probes, and domain
-    /// reachability have all arrived — a partial view of only some signal
-    /// categories would misreport confidence (e.g. reading `Limited` just
-    /// because DNS hasn't come back yet, not because it failed).
+    /// `None` until resolution, both reachability probes, domain
+    /// reachability, and the captive-portal probe have all arrived — a
+    /// partial view of only some signal categories would misreport
+    /// confidence (e.g. reading `Limited` just because DNS hasn't come back
+    /// yet, not because it failed, or reading `Online` before the
+    /// captive-portal cap has had a chance to apply).
     pub fn confidence(&self) -> Option<ConnectionConfidence> {
         let resolution = self.resolution.as_ref()?;
         let reachability = self.reachability.as_ref()?;
         let reachability_v6 = self.reachability_v6.as_ref()?;
         let domain_reachability = self.domain_reachability.as_ref()?;
-        let dns_ok = resolution.iter().any(|r| r.resolved);
-        let ping_ok =
-            reachability.iter().any(|p| p.reachable) || reachability_v6.iter().any(|p| p.reachable);
-        let tcp_ok = domain_reachability.iter().any(|c| c.reachable);
-        Some(confidence_from(dns_ok, ping_ok, tcp_ok))
+        let captive_portal = self.captive_portal.as_ref()?;
+        let dns_ok = majority_ok(resolution, |r| r.resolved);
+        let ping_ok = majority_ok(reachability, |p| p.reachable)
+            || majority_ok(reachability_v6, |p| p.reachable);
+        let tcp_ok = majority_ok(domain_reachability, |c| c.reachable);
+        Some(cap_for_captive_portal(
+            confidence_from(dns_ok, ping_ok, tcp_ok),
+            *captive_portal,
+        ))
     }
 }
 
@@ -475,5 +513,183 @@ mod tests {
             confidence_from(false, false, false),
             ConnectionConfidence::Offline
         );
+    }
+
+    fn resolution_results(oks: &[bool]) -> Vec<ResolutionResult> {
+        oks.iter()
+            .map(|&resolved| ResolutionResult {
+                domain: "example.com".to_string(),
+                resolved,
+                addresses: Vec::new(),
+                duration_ms: None,
+            })
+            .collect()
+    }
+
+    fn ping_results(oks: &[bool]) -> Vec<PingResult> {
+        oks.iter()
+            .map(|&reachable| PingResult {
+                target: "1.1.1.1".to_string(),
+                reachable,
+                rtt_ms: None,
+            })
+            .collect()
+    }
+
+    fn connect_results(oks: &[bool]) -> Vec<ConnectResult> {
+        oks.iter()
+            .map(|&reachable| ConnectResult {
+                target: "example.com".to_string(),
+                port: 443,
+                reachable,
+                rtt_ms: None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn majority_ok_requires_more_than_half() {
+        assert!(
+            !majority_ok(
+                &ping_results(&[true, false, false, false, false, false, false]),
+                |p| p.reachable
+            ),
+            "1 of 7 must not count as ok"
+        );
+        assert!(
+            !majority_ok(
+                &ping_results(&[true, true, true, false, false, false, false]),
+                |p| p.reachable
+            ),
+            "3 of 7 must not count as ok"
+        );
+        assert!(
+            majority_ok(
+                &ping_results(&[true, true, true, true, false, false, false]),
+                |p| p.reachable
+            ),
+            "4 of 7 must count as ok"
+        );
+        assert!(
+            !majority_ok::<PingResult>(&[], |p| p.reachable),
+            "empty list must never count as ok"
+        );
+    }
+
+    #[test]
+    fn network_status_confidence_needs_majority_per_category() {
+        let mut status = NetworkStatus {
+            interfaces: Vec::new(),
+            vpn: vpn::VpnStatus {
+                tunnels: Vec::new(),
+                primary_interface: None,
+                connected: false,
+                split_tunnel: false,
+                routed_subnets: Vec::new(),
+            },
+            resolvers: Vec::new(),
+            split_dns: false,
+            reachability: ping_results(&[true, false, false, false, false, false, false]),
+            reachability_v6: ping_results(&[false, false, false, false, false]),
+            resolution: resolution_results(&[true, false, false, false, false, false, false]),
+            domain_reachability: connect_results(&[true, false, false, false, false, false, false]),
+            proxy: proxy::ProxyConfig {
+                http: proxy::ProxyEndpoint {
+                    enabled: false,
+                    host: None,
+                    port: None,
+                },
+                https: proxy::ProxyEndpoint {
+                    enabled: false,
+                    host: None,
+                    port: None,
+                },
+                socks: proxy::ProxyEndpoint {
+                    enabled: false,
+                    host: None,
+                    port: None,
+                },
+                pac_url: None,
+                exceptions: Vec::new(),
+            },
+            wifi: WifiStatus::default(),
+            ip_stack: IpStack::None,
+            captive_portal: captive_portal::CaptivePortalStatus::Clear,
+        };
+        // Only 1-of-7 succeeding in every category used to read Online under
+        // `.any()`; under majority it must read Offline.
+        assert_eq!(status.confidence(), ConnectionConfidence::Offline);
+
+        // Bring ping to a v6 majority (3 of 5) while v4 and the rest stay
+        // minority — ping_ok should come from the v6 stack alone (OR of
+        // per-stack majorities, not a combined pool).
+        status.reachability_v6 = ping_results(&[true, true, true, false, false]);
+        assert_eq!(status.confidence(), ConnectionConfidence::Limited);
+    }
+
+    #[test]
+    fn captive_portal_detected_caps_online_at_limited() {
+        assert_eq!(
+            cap_for_captive_portal(
+                ConnectionConfidence::Online,
+                captive_portal::CaptivePortalStatus::Detected
+            ),
+            ConnectionConfidence::Limited
+        );
+    }
+
+    #[test]
+    fn captive_portal_unknown_does_not_cap() {
+        assert_eq!(
+            cap_for_captive_portal(
+                ConnectionConfidence::Online,
+                captive_portal::CaptivePortalStatus::Unknown
+            ),
+            ConnectionConfidence::Online
+        );
+    }
+
+    #[test]
+    fn captive_portal_clear_does_not_cap() {
+        assert_eq!(
+            cap_for_captive_portal(
+                ConnectionConfidence::Online,
+                captive_portal::CaptivePortalStatus::Clear
+            ),
+            ConnectionConfidence::Online
+        );
+    }
+
+    #[test]
+    fn captive_portal_cap_does_not_raise_offline_or_limited() {
+        assert_eq!(
+            cap_for_captive_portal(
+                ConnectionConfidence::Limited,
+                captive_portal::CaptivePortalStatus::Detected
+            ),
+            ConnectionConfidence::Limited
+        );
+        assert_eq!(
+            cap_for_captive_portal(
+                ConnectionConfidence::Offline,
+                captive_portal::CaptivePortalStatus::Detected
+            ),
+            ConnectionConfidence::Offline
+        );
+    }
+
+    #[test]
+    fn partial_status_confidence_waits_for_captive_portal() {
+        let mut partial = PartialStatus {
+            resolution: Some(resolution_results(&[true; 7])),
+            reachability: Some(ping_results(&[true; 7])),
+            reachability_v6: Some(ping_results(&[true; 5])),
+            domain_reachability: Some(connect_results(&[true; 7])),
+            ..Default::default()
+        };
+        assert_eq!(partial.confidence(), None);
+
+        partial.captive_portal = Some(captive_portal::CaptivePortalStatus::Detected);
+        assert_eq!(partial.confidence(), Some(ConnectionConfidence::Limited));
     }
 }
