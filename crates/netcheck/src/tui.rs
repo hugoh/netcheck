@@ -626,14 +626,14 @@ fn draw(
             .unwrap_or_default();
         let auto_state = if auto_refresh { "on, every 5s" } else { "off" };
 
-        let (confidence_label, confidence_color) = match status.confidence() {
-            Some(netstatus::ConnectionConfidence::Online) => ("Online", Color::Green),
-            Some(netstatus::ConnectionConfidence::Limited) => ("Limited", Color::Yellow),
-            Some(netstatus::ConnectionConfidence::Offline) => ("Offline", Color::Red),
+        let (confidence_text, confidence_color) = match status.confidence() {
+            Some(netstatus::ConnectionConfidence::Online) => ("▲ Online", Color::Green),
+            Some(netstatus::ConnectionConfidence::Limited) => ("◆ Limited", Color::Yellow),
+            Some(netstatus::ConnectionConfidence::Offline) => ("✕ Offline", Color::Red),
             None => ("collecting...", Color::DarkGray),
         };
         let mut footer_spans = vec![Span::styled(
-            format!("{confidence_label}   "),
+            format!("{confidence_text}   "),
             Style::default().fg(confidence_color),
         )];
         if status.captive_portal == Some(netstatus::CaptivePortalStatus::Detected) {
