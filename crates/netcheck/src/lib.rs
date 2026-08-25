@@ -90,7 +90,7 @@ pub fn run_command(command: Command) {
         Command::Proxy => print_json(&netstatus::proxy_config()),
         Command::Wifi => print_json(&netstatus::wifi_status()),
         Command::Captive => print_json(&netstatus::check_captive_portal()),
-        Command::Connection => print_json(&netstatus::collect().confidence()),
+        Command::Connection => print_json(&netstatus::confidence_only()),
         Command::Ping { targets } => {
             let refs: Vec<&str> = targets.iter().map(String::as_str).collect();
             print_json(&netstatus::ping_all(&refs));

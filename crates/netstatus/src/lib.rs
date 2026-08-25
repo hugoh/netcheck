@@ -29,7 +29,7 @@ pub use reachability::{PingResult, ping, ping_all};
 pub use resolution::{DEFAULT_RESOLUTION_TARGETS, ResolutionResult, resolve, resolve_all};
 pub use status::{
     ConnectionConfidence, DEFAULT_PING_TARGETS, DEFAULT_PING_TARGETS_V6, NetworkStatus,
-    PartialStatus, StatusField, collect, collect_streaming,
+    PartialStatus, StatusField, collect, collect_streaming, confidence_only,
 };
 pub use vpn::{VpnStatus, vpn_status};
 pub use wifi::{WifiIdentity, WifiRadio, WifiStatus, wifi_identity, wifi_radio, wifi_status};

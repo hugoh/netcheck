@@ -87,6 +87,33 @@ impl NetworkStatus {
     }
 }
 
+/// Derives connection confidence from only the three probes it needs —
+/// DNS resolution, ICMP reachability (v4+v6), TCP connect — skipping
+/// everything else `collect()` runs (Wi-Fi, proxy, interfaces, VPN, and
+/// the captive-portal probe). Use this instead of `collect().confidence()`
+/// when only the confidence tier is needed.
+pub fn confidence_only() -> ConnectionConfidence {
+    std::thread::scope(|scope| {
+        let resolution_handle = scope.spawn(|| resolution::resolve_all(DEFAULT_RESOLUTION_TARGETS));
+        let reachability_handle = scope.spawn(|| reachability::ping_all(DEFAULT_PING_TARGETS));
+        let reachability_v6_handle =
+            scope.spawn(|| reachability::ping_all(DEFAULT_PING_TARGETS_V6));
+        let domain_reachability_handle =
+            scope.spawn(|| connect::connect_all(DEFAULT_RESOLUTION_TARGETS, 443));
+
+        let resolution = resolution_handle.join().unwrap();
+        let reachability = reachability_handle.join().unwrap();
+        let reachability_v6 = reachability_v6_handle.join().unwrap();
+        let domain_reachability = domain_reachability_handle.join().unwrap();
+
+        let dns_ok = resolution.iter().any(|r| r.resolved);
+        let ping_ok =
+            reachability.iter().any(|p| p.reachable) || reachability_v6.iter().any(|p| p.reachable);
+        let tcp_ok = domain_reachability.iter().any(|c| c.reachable);
+        confidence_from(dns_ok, ping_ok, tcp_ok)
+    })
+}
+
 /// Collects a full network status snapshot. Shells out to `scutil`,
 /// `ping`, and `system_profiler`, resolves DNS, and probes for a captive
 /// portal; independent probes run concurrently, so this takes roughly as
@@ -368,6 +395,20 @@ mod tests {
             all_variants.len(),
             "not every StatusField variant was sent"
         );
+    }
+
+    #[test]
+    fn confidence_only_runs_without_the_full_snapshot() {
+        // Smoke test: confidence_only() must compile, run to completion, and
+        // return a valid ConnectionConfidence without requiring NetworkStatus
+        // or PartialStatus — the whole point is it's independent of collect().
+        let result = confidence_only();
+        assert!(matches!(
+            result,
+            ConnectionConfidence::Online
+                | ConnectionConfidence::Limited
+                | ConnectionConfidence::Offline
+        ));
     }
 
     #[test]
