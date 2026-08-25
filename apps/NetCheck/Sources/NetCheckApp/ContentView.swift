@@ -115,7 +115,7 @@ struct ContentView: View {
             }
         }
         .background(tabKeyShortcuts)
-        .background(quitKeyShortcut)
+        .background(tabNavigationShortcuts)
     }
 
     private var footer: some View {
@@ -163,13 +163,22 @@ struct ContentView: View {
         }
     }
 
-    /// Plain `q` quits, matching netcheck-tui/-gui — separate from Cmd+Q,
-    /// which SwiftUI already wires to the standard app menu.
-    private var quitKeyShortcut: some View {
-        Button("") { NSApp.terminate(nil) }
-            .keyboardShortcut("q", modifiers: [])
-            .opacity(0)
-            .frame(width: 0, height: 0)
+    private var tabNavigationShortcuts: some View {
+        Group {
+            Button("") { moveTab(by: -1) }
+                .keyboardShortcut("[", modifiers: [.command, .shift])
+            Button("") { moveTab(by: 1) }
+                .keyboardShortcut("]", modifiers: [.command, .shift])
+        }
+        .opacity(0)
+        .frame(width: 0, height: 0)
+    }
+
+    private func moveTab(by offset: Int) {
+        let all = Tab.allCases
+        guard let index = all.firstIndex(of: activeTab) else { return }
+        let newIndex = (index + offset + all.count) % all.count
+        activeTab = all[newIndex]
     }
 
     @ViewBuilder
