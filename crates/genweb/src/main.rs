@@ -62,12 +62,15 @@ fn extract_tagline(readme: &str) -> String {
 /// Renders the README to HTML, rewriting its GitHub-relative screenshot
 /// paths to match where the generated site actually serves them from.
 fn render_body(readme: &str) -> String {
-    let readme = readme.replace("assets/screenshots/", "screenshots/");
+    let readme = readme
+        .replace("assets/screenshots/", "screenshots/")
+        .replace("assets/icon-1024.png", "favicon.png");
 
     let mut options = Options::default();
     options.extension.table = true;
     options.extension.alerts = true;
     options.extension.header_id_prefix = Some(String::new());
+    options.render.r#unsafe = true;
 
     let html = markdown_to_html(&readme, &options);
 
@@ -87,6 +90,7 @@ fn render_page(description: &str, body: &str) -> String {
 <title>{SITE_NAME} — {description}</title>
 <meta name="description" content="{description}">
 <link rel="canonical" href="{SITE_URL}">
+<link rel="icon" type="image/png" href="favicon.png">
 <meta property="og:type" content="website">
 <meta property="og:title" content="{SITE_NAME}">
 <meta property="og:description" content="{description}">
@@ -98,7 +102,7 @@ fn render_page(description: &str, body: &str) -> String {
 </head>
 <body>
 <nav class="topnav">
-<a class="brand" href="#">{SITE_NAME}</a>
+<a class="brand" href="#"><img src="favicon.png" alt="" width="24" height="24">{SITE_NAME}</a>
 <a href="#install">Install</a>
 <a href="#the-two-flavors">The two flavors</a>
 <a href="#screenshots">Screenshots</a>
