@@ -2,10 +2,10 @@ import Foundation
 import Testing
 @testable import NetCheckApp
 
-/// One row of testdata/age-format-cases.tsv, shared with the Rust TUI's
+/// One entry of testdata/age-format-cases.json, shared with the Rust TUI's
 /// format_age tests so both UIs agree on the now/seconds/minutes/hours
 /// thresholds.
-private struct AgeFormatCase {
+private struct AgeFormatCase: Decodable {
     let seconds: TimeInterval
     let magnitude: Int
     let unit: String
@@ -28,12 +28,9 @@ private func loadAgeFormatCases() -> [AgeFormatCase] {
         .deletingLastPathComponent() // Tests
         .deletingLastPathComponent() // NetCheck
         .deletingLastPathComponent() // apps
-        .appendingPathComponent("testdata/age-format-cases.tsv")
-    let contents = try! String(contentsOf: fixtureURL, encoding: .utf8)
-    return contents.split(separator: "\n").dropFirst().map { line in
-        let cols = line.split(separator: "\t")
-        return AgeFormatCase(seconds: TimeInterval(cols[0])!, magnitude: Int(cols[1])!, unit: String(cols[2]))
-    }
+        .appendingPathComponent("testdata/age-format-cases.json")
+    let data = try! Data(contentsOf: fixtureURL)
+    return try! JSONDecoder().decode([AgeFormatCase].self, from: data)
 }
 
 struct FooterFormattingTests {

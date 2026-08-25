@@ -680,25 +680,30 @@ mod tests {
         );
     }
 
+    #[derive(serde::Deserialize)]
+    struct AgeFormatCase {
+        seconds: u64,
+        magnitude: u64,
+        unit: String,
+    }
+
     /// Cases shared with the SwiftUI app's FooterFormattingTests, so both
     /// UIs agree on the now/seconds/minutes/hours thresholds.
     #[test]
     fn format_age_matches_shared_fixture() {
-        let fixture = include_str!("../../../testdata/age-format-cases.tsv");
-        for line in fixture.lines().skip(1) {
-            let mut cols = line.split('\t');
-            let seconds: u64 = cols.next().unwrap().parse().unwrap();
-            let magnitude: u64 = cols.next().unwrap().parse().unwrap();
-            let unit = cols.next().unwrap();
-            let expected = if unit == "now" {
+        let fixture = include_str!("../../../testdata/age-format-cases.json");
+        let cases: Vec<AgeFormatCase> = serde_json::from_str(fixture).unwrap();
+        for case in cases {
+            let expected = if case.unit == "now" {
                 "now".to_string()
             } else {
-                format!("{magnitude}{unit}")
+                format!("{}{}", case.magnitude, case.unit)
             };
             assert_eq!(
-                format_age(Duration::from_secs(seconds)),
+                format_age(Duration::from_secs(case.seconds)),
                 expected,
-                "seconds={seconds}"
+                "seconds={}",
+                case.seconds
             );
         }
     }

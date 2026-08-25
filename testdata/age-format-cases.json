@@ -1,0 +1,11 @@
+[
+	{ "seconds": 0, "magnitude": 0, "unit": "now" },
+	{ "seconds": 2, "magnitude": 0, "unit": "now" },
+	{ "seconds": 3, "magnitude": 3, "unit": "s" },
+	{ "seconds": 59, "magnitude": 59, "unit": "s" },
+	{ "seconds": 60, "magnitude": 1, "unit": "m" },
+	{ "seconds": 125, "magnitude": 2, "unit": "m" },
+	{ "seconds": 3599, "magnitude": 59, "unit": "m" },
+	{ "seconds": 3600, "magnitude": 1, "unit": "h" },
+	{ "seconds": 18180, "magnitude": 5, "unit": "h" }
+]
