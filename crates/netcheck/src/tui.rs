@@ -26,14 +26,18 @@ fn pad_col(text: &str, width: usize) -> String {
     format!("{text:<width$} ")
 }
 
-/// Formats an elapsed duration as seconds under a minute, minutes above it —
-/// "42s" reads fine, "3717s" doesn't.
+/// Formats an elapsed duration as "now" under 3s, seconds under a minute,
+/// minutes under an hour, hours above it — "42s" reads fine, "3717s" doesn't.
 fn format_age(elapsed: Duration) -> String {
     let secs = elapsed.as_secs();
-    if secs > 59 {
+    if secs < 3 {
+        "now".to_string()
+    } else if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
         format!("{}m", secs / 60)
     } else {
-        format!("{secs}s")
+        format!("{}h", secs / 3600)
     }
 }
 
@@ -677,8 +681,14 @@ mod tests {
     }
 
     #[test]
+    fn format_age_shows_now_under_three_seconds() {
+        assert_eq!(format_age(Duration::from_secs(0)), "now");
+        assert_eq!(format_age(Duration::from_secs(2)), "now");
+    }
+
+    #[test]
     fn format_age_shows_seconds_under_a_minute() {
-        assert_eq!(format_age(Duration::from_secs(0)), "0s");
+        assert_eq!(format_age(Duration::from_secs(3)), "3s");
         assert_eq!(format_age(Duration::from_secs(59)), "59s");
     }
 
@@ -686,5 +696,13 @@ mod tests {
     fn format_age_shows_minutes_at_and_above_a_minute() {
         assert_eq!(format_age(Duration::from_secs(60)), "1m");
         assert_eq!(format_age(Duration::from_secs(125)), "2m");
+    }
+
+    #[test]
+    fn format_age_shows_hours_at_five_hours_three_minutes() {
+        assert_eq!(
+            format_age(Duration::from_secs(5 * 3600 + 3 * 60)),
+            "5h"
+        );
     }
 }
