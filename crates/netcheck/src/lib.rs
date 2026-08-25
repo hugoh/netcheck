@@ -36,6 +36,8 @@ pub enum Command {
     Proxy,
     /// Print Wi-Fi diagnostics as JSON
     Wifi,
+    /// Print captive-portal status as JSON
+    Captive,
     /// Ping one or more hosts (defaults to well-known public DNS IPs)
     Ping {
         #[arg(default_values_t = netstatus::DEFAULT_PING_TARGETS.iter().map(|s| s.to_string()))]
@@ -85,6 +87,7 @@ pub fn run_command(command: Command) {
         Command::Vpn => print_json(&netstatus::vpn_status(&netstatus::list_interfaces())),
         Command::Proxy => print_json(&netstatus::proxy_config()),
         Command::Wifi => print_json(&netstatus::wifi_status()),
+        Command::Captive => print_json(&netstatus::check_captive_portal()),
         Command::Ping { targets } => {
             let refs: Vec<&str> = targets.iter().map(String::as_str).collect();
             print_json(&netstatus::ping_all(&refs));
