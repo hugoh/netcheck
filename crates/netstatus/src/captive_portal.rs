@@ -4,7 +4,7 @@ use ureq::Agent;
 
 const CAPTIVE_PORTAL_URL: &str = "http://captive.apple.com/hotspot-detect.html";
 const CAPTIVE_PORTAL_TIMEOUT: Duration = Duration::from_secs(10);
-const EXPECTED_BODY: &str = "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>";
+const EXPECTED_BODY_MARKER: &str = "Success";
 
 /// Whether something between this machine and the internet is
 /// intercepting plain HTTP traffic to serve a login page (a captive
@@ -17,12 +17,15 @@ pub enum CaptivePortalStatus {
     Unknown,
 }
 
-/// Apple's endpoint returns exactly the HTML in `EXPECTED_BODY` (200) when
-/// nothing intercepted the request. Anything else — a rewritten body, a
-/// redirect, any other status — means a portal (or something else) is
-/// altering the response.
+/// Apple's endpoint returns a 200 with "Success" in the body when nothing
+/// intercepted the request. Matching on the marker rather than the full HTML
+/// byte-for-byte avoids false `Detected` results from whitespace/formatting
+/// drift Apple has introduced across OS versions — the same tolerance
+/// Apple's own client uses. Anything else — a rewritten body, a redirect,
+/// any other status — means a portal (or something else) is altering the
+/// response.
 fn classify_response(status: u16, body: &str) -> CaptivePortalStatus {
-    if status == 200 && body.trim() == EXPECTED_BODY {
+    if status == 200 && body.contains(EXPECTED_BODY_MARKER) {
         CaptivePortalStatus::Clear
     } else {
         CaptivePortalStatus::Detected
@@ -71,17 +74,17 @@ mod tests {
         assert_eq!(
             classify_response(
                 200,
-                "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Login required</BODY></HTML>"
+                "<HTML><HEAD><TITLE>Portal</TITLE></HEAD><BODY>Login required</BODY></HTML>"
             ),
             CaptivePortalStatus::Detected
         );
     }
 
     #[test]
-    fn bare_success_without_html_wrapper_is_detected() {
+    fn bare_success_without_html_wrapper_is_clear() {
         assert_eq!(
             classify_response(200, "Success"),
-            CaptivePortalStatus::Detected
+            CaptivePortalStatus::Clear
         );
     }
 
