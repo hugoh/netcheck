@@ -4,7 +4,7 @@ use ureq::Agent;
 
 const CAPTIVE_PORTAL_URL: &str = "http://captive.apple.com/hotspot-detect.html";
 const CAPTIVE_PORTAL_TIMEOUT: Duration = Duration::from_secs(10);
-const EXPECTED_BODY: &str = "Success";
+const EXPECTED_BODY: &str = "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>";
 
 /// Whether something between this machine and the internet is
 /// intercepting plain HTTP traffic to serve a login page (a captive
@@ -17,8 +17,8 @@ pub enum CaptivePortalStatus {
     Unknown,
 }
 
-/// Apple's endpoint returns exactly `Success` (200) when nothing
-/// intercepted the request. Anything else — a rewritten body, a
+/// Apple's endpoint returns exactly the HTML in `EXPECTED_BODY` (200) when
+/// nothing intercepted the request. Anything else — a rewritten body, a
 /// redirect, any other status — means a portal (or something else) is
 /// altering the response.
 fn classify_response(status: u16, body: &str) -> CaptivePortalStatus {
@@ -58,7 +58,10 @@ mod tests {
     #[test]
     fn exact_success_body_is_clear() {
         assert_eq!(
-            classify_response(200, "Success"),
+            classify_response(
+                200,
+                "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>"
+            ),
             CaptivePortalStatus::Clear
         );
     }
@@ -67,6 +70,14 @@ mod tests {
     fn altered_body_is_detected() {
         assert_eq!(
             classify_response(200, "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Login required</BODY></HTML>"),
+            CaptivePortalStatus::Detected
+        );
+    }
+
+    #[test]
+    fn bare_success_without_html_wrapper_is_detected() {
+        assert_eq!(
+            classify_response(200, "Success"),
             CaptivePortalStatus::Detected
         );
     }
