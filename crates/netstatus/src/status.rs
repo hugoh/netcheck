@@ -87,31 +87,53 @@ impl NetworkStatus {
     }
 }
 
-/// Derives connection confidence from only the three probes it needs —
-/// DNS resolution, ICMP reachability (v4+v6), TCP connect — skipping
-/// everything else `collect()` runs (Wi-Fi, proxy, interfaces, VPN, and
-/// the captive-portal probe). Use this instead of `collect().confidence()`
-/// when only the confidence tier is needed.
-pub fn confidence_only() -> ConnectionConfidence {
-    std::thread::scope(|scope| {
-        let resolution_handle = scope.spawn(|| resolution::resolve_all(DEFAULT_RESOLUTION_TARGETS));
-        let reachability_handle = scope.spawn(|| reachability::ping_all(DEFAULT_PING_TARGETS));
-        let reachability_v6_handle =
-            scope.spawn(|| reachability::ping_all(DEFAULT_PING_TARGETS_V6));
-        let domain_reachability_handle =
-            scope.spawn(|| connect::connect_all(DEFAULT_RESOLUTION_TARGETS, 443));
+/// The four probes that determine `ConnectionConfidence`, run once and
+/// shared by both `collect()` (which needs the raw results in
+/// `NetworkStatus`) and `confidence_only()` (which needs only the derived
+/// tier) instead of each spawning its own copy of the same probes.
+struct CoreSignals {
+    resolution: Vec<ResolutionResult>,
+    reachability: Vec<PingResult>,
+    reachability_v6: Vec<PingResult>,
+    domain_reachability: Vec<ConnectResult>,
+}
 
-        let resolution = resolution_handle.join().unwrap();
-        let reachability = reachability_handle.join().unwrap();
-        let reachability_v6 = reachability_v6_handle.join().unwrap();
-        let domain_reachability = domain_reachability_handle.join().unwrap();
+impl CoreSignals {
+    fn collect() -> Self {
+        std::thread::scope(|scope| {
+            let resolution_handle =
+                scope.spawn(|| resolution::resolve_all(DEFAULT_RESOLUTION_TARGETS));
+            let reachability_handle = scope.spawn(|| reachability::ping_all(DEFAULT_PING_TARGETS));
+            let reachability_v6_handle =
+                scope.spawn(|| reachability::ping_all(DEFAULT_PING_TARGETS_V6));
+            let domain_reachability_handle =
+                scope.spawn(|| connect::connect_all(DEFAULT_RESOLUTION_TARGETS, 443));
 
-        let dns_ok = resolution.iter().any(|r| r.resolved);
-        let ping_ok =
-            reachability.iter().any(|p| p.reachable) || reachability_v6.iter().any(|p| p.reachable);
-        let tcp_ok = domain_reachability.iter().any(|c| c.reachable);
+            CoreSignals {
+                resolution: resolution_handle.join().unwrap(),
+                reachability: reachability_handle.join().unwrap(),
+                reachability_v6: reachability_v6_handle.join().unwrap(),
+                domain_reachability: domain_reachability_handle.join().unwrap(),
+            }
+        })
+    }
+
+    fn confidence(&self) -> ConnectionConfidence {
+        let dns_ok = self.resolution.iter().any(|r| r.resolved);
+        let ping_ok = self.reachability.iter().any(|p| p.reachable)
+            || self.reachability_v6.iter().any(|p| p.reachable);
+        let tcp_ok = self.domain_reachability.iter().any(|c| c.reachable);
         confidence_from(dns_ok, ping_ok, tcp_ok)
-    })
+    }
+}
+
+/// Derives connection confidence from only the three signal categories it
+/// needs — DNS resolution, ICMP reachability (v4+v6), TCP connect —
+/// skipping everything else `collect()` runs (Wi-Fi, proxy, interfaces,
+/// VPN, and the captive-portal probe). Use this instead of
+/// `collect().confidence()` when only the confidence tier is needed.
+pub fn confidence_only() -> ConnectionConfidence {
+    CoreSignals::collect().confidence()
 }
 
 /// Collects a full network status snapshot. Shells out to `scutil`,
@@ -125,12 +147,7 @@ pub fn collect() -> NetworkStatus {
     std::thread::scope(|scope| {
         let interfaces_handle = scope.spawn(interfaces::list_interfaces);
         let resolvers_handle = scope.spawn(dns::list_resolvers);
-        let reachability_handle = scope.spawn(|| reachability::ping_all(DEFAULT_PING_TARGETS));
-        let reachability_v6_handle =
-            scope.spawn(|| reachability::ping_all(DEFAULT_PING_TARGETS_V6));
-        let resolution_handle = scope.spawn(|| resolution::resolve_all(DEFAULT_RESOLUTION_TARGETS));
-        let domain_reachability_handle =
-            scope.spawn(|| connect::connect_all(DEFAULT_RESOLUTION_TARGETS, 443));
+        let core_signals_handle = scope.spawn(CoreSignals::collect);
         let proxy_handle = scope.spawn(proxy::proxy_config);
         let wifi_handle = scope.spawn(wifi::wifi_status);
         let captive_portal_handle = scope.spawn(captive_portal::check_captive_portal);
@@ -140,12 +157,13 @@ pub fn collect() -> NetworkStatus {
         let ip_stack = ip_stack::detect_ip_stack(&interfaces);
         let resolvers = resolvers_handle.join().unwrap();
         let split_dns = dns::has_split_dns(&resolvers);
+        let core_signals = core_signals_handle.join().unwrap();
 
         NetworkStatus {
-            reachability: reachability_handle.join().unwrap(),
-            reachability_v6: reachability_v6_handle.join().unwrap(),
-            resolution: resolution_handle.join().unwrap(),
-            domain_reachability: domain_reachability_handle.join().unwrap(),
+            reachability: core_signals.reachability,
+            reachability_v6: core_signals.reachability_v6,
+            resolution: core_signals.resolution,
+            domain_reachability: core_signals.domain_reachability,
             proxy: proxy_handle.join().unwrap(),
             wifi: wifi_handle.join().unwrap(),
             captive_portal: captive_portal_handle.join().unwrap(),
