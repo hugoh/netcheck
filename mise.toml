@@ -1,5 +1,4 @@
 [tools]
-rust = "1.98.0"
 hk = "1.56.1"
 actionlint = "1.7.12"
 pinact = "4.1.1"
@@ -7,94 +6,16 @@ zizmor = "1.29.0"
 ghalint = "1.5.6"
 gitleaks = "8.30.1"
 typos = "1.49.0"
+biome = "2.5.10"
 rumdl = "0.2.60"
 tombi = "1.4.1"
 "github:owenlamont/ryl" = "0.21.0"
-biome = "2.5.10"
 shellcheck = "0.11.0"
 "aqua:anordal/shellharden" = "4.3.2"
 shfmt = "3.13.1"
 cocogitto = "7.0.0"
-"aqua:EmbarkStudios/cargo-deny" = "0.20.2"
-"aqua:rustsec/rustsec/cargo-audit" = "0.22.2"
-
-[tasks."build:netcheck"]
-description = "Build the full netcheck binary (dashboard + JSON subcommands; pass --release for a release build)"
-run = "cargo build -p netcheck --bin netcheck --features tui"
-
-[tasks."build:netcheck-core"]
-description = "Build the slim netcheck-core binary (JSON subcommands only, no TUI deps — used by NetCheck.app; pass --release for a release build)"
-run = "cargo build -p netcheck --bin netcheck-core"
-
-[tasks."build:dev"]
-description = "Build dev versions of every binary: netcheck, netcheck-core, and the macOS app"
-depends = ["build:netcheck", "build:netcheck-core", "build:app"]
-
-[tasks."build:netcheck-release"]
-description = "Build a release, --locked netcheck binary"
-depends = ["build:netcheck --release --locked"]
-
-[tasks."build:netcheck-core-release"]
-description = "Build a release, --locked netcheck-core binary"
-depends = ["build:netcheck-core --release --locked"]
-
-[tasks."build:release"]
-# Two separate invocations, not one combined --workspace build: netcheck and
-# netcheck-core have genuinely different feature sets (tui on/off), so unlike
-# the old CLI/TUI/GUI split (three crates, identical features, worth sharing
-# one unit graph) there's no shared work to lose here — and building
-# netcheck-core in its own invocation, with the tui feature never requested,
-# guarantees ratatui/crossterm aren't even compiled into its dependency
-# graph, not just dead-code-eliminated from the link.
-description = "Build release, --locked binaries for netcheck and netcheck-core"
-depends = ["build:netcheck-release", "build:netcheck-core-release"]
-
-[tasks."run:netcheck"]
-description = "Run the netcheck dashboard"
-run = "cargo run -p netcheck --bin netcheck --features tui"
-
-[tasks."run:app"]
-description = "Build (if needed) and launch the dev NetCheck.app"
-depends = ["build:app"]
-run = "open target/dev-app/NetCheck.app"
-
-[tasks."check:cargo-fmt"]
-description = "Check Rust formatting"
-run = "cargo fmt --all -- --check"
-sources = ["**/*.rs"]
-outputs = { auto = true }
-
-[tasks."check:cargo-clippy"]
-description = "Lint Rust with clippy"
-run = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
-sources = ["**/*.rs", "**/Cargo.toml", "Cargo.lock"]
-outputs = { auto = true }
-
-[tasks."check:cargo-test"]
-description = "Run the Rust test suite"
-run = "cargo test --workspace --all-features"
-sources = ["**/*.rs", "**/Cargo.toml", "Cargo.lock"]
-outputs = { auto = true }
-
-[tasks."check:cargo-deny"]
-description = "Check licenses/duplicate-versions/unknown-sources via cargo-deny"
-run = "cargo deny check"
-sources = ["**/Cargo.toml", "Cargo.lock", "deny.toml"]
-outputs = { auto = true }
-
-[tasks."check:cargo-audit"]
-description = "Scan Cargo.lock against RustSec advisories"
-run = "cargo audit"
-sources = ["Cargo.lock"]
-outputs = { auto = true }
-
-[tasks."check:swift-test"]
-description = "Run the NetCheck.app Swift test suite"
-run = "swift test --package-path apps/NetCheck"
-sources = [
-  "apps/NetCheck/Package.swift",
-  "apps/NetCheck/Package.resolved",
-  "apps/NetCheck/Sources/**",
-  "apps/NetCheck/Tests/**",
-]
-outputs = { auto = true }
+uv = "0.12.6"
+swiftlint = "0.65.1"
+swiftformat = { version = "0.62.1", os = ["macos"] }
+pandoc = "3.6.4"
+"aqua:peripheryapp/periphery" = { version = "3.8.0", os = ["macos"] }

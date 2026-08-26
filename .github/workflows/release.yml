@@ -26,8 +26,6 @@ jobs:
         with:
           fetch-depth: "0"
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-
       - name: Guard manual dispatch to main
         if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
         env:
@@ -63,16 +61,19 @@ jobs:
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}"
           git push origin "${TAG}"
 
-      - name: Build netcheck release binary
+      - name: Build netcheck CLI release binary
         if: steps.tag.outputs.skip != 'true'
         env:
           TAG: ${{ steps.tag.outputs.tag }}
           NETCHECK_VERSION: ${{ steps.tag.outputs.version }}
         run: |
-          mise run build:release
+          mise run build:cli
+          BIN="apps/NetCheck/.build/release/netcheck"
+          strip "$BIN"
+          codesign --force --options runtime --sign - "$BIN"
           mkdir -p dist
           tar -czf "dist/netcheck-${TAG#v}-aarch64-apple-darwin.tar.gz" \
-            -C target/release netcheck
+            -C "apps/NetCheck/.build/release" netcheck
 
       - name: Build & bundle NetCheck.app
         if: steps.tag.outputs.skip != 'true'

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+#MISE description="Scan for unused Swift declarations with Periphery"
+#MISE sources=["apps/NetCheck/Sources/**", "apps/NetCheck/Tests/**"]
+#MISE outputs={auto=true}
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+(cd "$ROOT_DIR/apps/NetCheck" && periphery scan --disable-update-check --strict)

@@ -1,154 +1,176 @@
-import Foundation
+import NetStatus
 import SwiftUI
 
-/// Mirrors `netstatus::dns::vpn_scoped_domains` (Rust) — domains only
-/// resolvable via a VPN tunnel's own resolver.
+/// Domains only resolvable via a VPN tunnel's own resolver.
 func vpnScopedDomains(_ resolvers: [Resolver]) -> [String] {
-    var domains: [String] = []
-    for r in resolvers {
-        guard r.scoped, let ifName = r.ifName, ifName.hasPrefix("utun") else { continue }
-        guard let domain = r.domain ?? r.searchDomains.first else { continue }
-        if !domains.contains(domain) {
-            domains.append(domain)
-        }
-    }
-    return domains
+    Probe.vpnScopedDomains(resolvers)
 }
 
-/// One line of `netcheck stream`'s NDJSON output — exactly one field is
-/// non-nil per envelope, matching Rust's `StatusField` enum (serde's
-/// default externally-tagged representation: `{"VariantName": <data>}`).
-struct StatusFieldEnvelope: Decodable {
-    let interfaces: [NetInterface]?
-    let vpn: VpnStatus?
-    let resolvers: [Resolver]?
-    let splitDns: Bool?
-    let reachability: [PingResult]?
-    let reachabilityV6: [PingResult]?
-    let resolution: [ResolutionResult]?
-    let domainReachability: [ConnectResult]?
-    let proxy: ProxyConfig?
-    let wifiIdentity: WifiIdentity?
-    let wifiRadio: WifiRadio?
-    let ipStack: IpStack?
-    let captivePortal: CaptivePortalStatus?
-
-    enum CodingKeys: String, CodingKey {
-        case interfaces = "Interfaces"
-        case vpn = "Vpn"
-        case resolvers = "Resolvers"
-        case splitDns = "SplitDns"
-        case reachability = "Reachability"
-        case reachabilityV6 = "ReachabilityV6"
-        case resolution = "Resolution"
-        case domainReachability = "DomainReachability"
-        case proxy = "Proxy"
-        case wifiIdentity = "WifiIdentity"
-        case wifiRadio = "WifiRadio"
-        case ipStack = "IpStack"
-        case captivePortal = "CaptivePortal"
-    }
-}
-
-/// Progressively-filled network status, mirroring netcheck-tui/-gui's
-/// `PartialStatus`. Fields start `nil` and are merged in as each
-/// `StatusFieldEnvelope` line arrives; a refresh never blanks a field back
-/// to `nil` — only a new value replaces the old one.
+/// Progressively-filled network status. Single-value fields start `nil` and
+/// are merged in as each `StatusField` arrives from
+/// `NetStatus.collectStreaming`; a refresh never blanks a field back to
+/// `nil`. Target-list fields start empty and are upserted by target so fast
+/// targets show up without waiting on the slowest.
 struct PartialNetworkStatus {
     var interfaces: [NetInterface]?
     var vpn: VpnStatus?
     var splitDns: Bool?
     var resolvers: [Resolver]?
-    var reachability: [PingResult]?
-    var reachabilityV6: [PingResult]?
-    var resolution: [ResolutionResult]?
-    var domainReachability: [ConnectResult]?
+    var reachability: [PingResult] = []
+    var reachabilityV6: [PingResult] = []
+    var resolution: [ResolutionResult] = []
+    var domainReachability: [ConnectResult] = []
     var proxy: ProxyConfig?
     var wifiIdentity: WifiIdentity?
     var wifiRadio: WifiRadio?
     var ipStack: IpStack?
+    var path: PathStatus?
     var captivePortal: CaptivePortalStatus?
+
+    /// Groups whose target list has fully drained at least once.
+    private(set) var completedGroups: Set<ProbeGroup> = []
+    /// The merge generation each group most recently completed at — the
+    /// completeness signal a manual refresh waits on.
+    private(set) var groupCompleteGeneration: [ProbeGroup: Int] = [:]
+    /// The merge generation each reachability/resolution row last got a
+    /// fresh value at, keyed `"<group>:<target>"` — drives the per-row
+    /// refresh spinner.
+    private(set) var rowGeneration: [String: Int] = [:]
 
     var hasAny: Bool {
         interfaces != nil || vpn != nil || resolvers != nil || splitDns != nil
-            || reachability != nil || reachabilityV6 != nil || resolution != nil
-            || domainReachability != nil || proxy != nil || wifiIdentity != nil
-            || wifiRadio != nil || ipStack != nil || captivePortal != nil
+            || !reachability.isEmpty || !reachabilityV6.isEmpty || !resolution.isEmpty
+            || !domainReachability.isEmpty || proxy != nil || wifiIdentity != nil
+            || wifiRadio != nil || ipStack != nil || path != nil || captivePortal != nil
     }
 
-    mutating func merge(_ envelope: StatusFieldEnvelope) {
-        if let v = envelope.interfaces { interfaces = v }
-        if let v = envelope.vpn { vpn = v }
-        if let v = envelope.resolvers { resolvers = v }
-        if let v = envelope.splitDns { splitDns = v }
-        if let v = envelope.reachability { reachability = v }
-        if let v = envelope.reachabilityV6 { reachabilityV6 = v }
-        if let v = envelope.resolution { resolution = v }
-        if let v = envelope.domainReachability { domainReachability = v }
-        if let v = envelope.proxy { proxy = v }
-        if let v = envelope.wifiIdentity { wifiIdentity = v }
-        if let v = envelope.wifiRadio { wifiRadio = v }
-        if let v = envelope.ipStack { ipStack = v }
-        if let v = envelope.captivePortal { captivePortal = v }
+    func isPending(_ key: String, asOf generation: Int) -> Bool {
+        (rowGeneration[key] ?? -1) < generation
+    }
+
+    func isRefreshComplete(asOf generation: Int) -> Bool {
+        Self.confidenceGroups.allSatisfy { (groupCompleteGeneration[$0] ?? -1) >= generation }
+    }
+
+    private static let confidenceGroups: Set<ProbeGroup> = [
+        .resolution, .reachability, .reachabilityV6, .domainReachability,
+    ]
+
+    private mutating func upsert<T>(
+        _ list: WritableKeyPath<PartialNetworkStatus, [T]>,
+        _ item: T, key: (T) -> String, rowKey: String, generation: Int
+    ) {
+        if let index = self[keyPath: list].firstIndex(where: { key($0) == key(item) }) {
+            self[keyPath: list][index] = item
+        } else {
+            self[keyPath: list].append(item)
+        }
+        rowGeneration[rowKey] = generation
+    }
+
+    // Flat dispatch over the StatusField cases — breadth, not nested logic.
+    // swiftlint:disable:next cyclomatic_complexity
+    mutating func merge(_ field: StatusField, generation: Int) {
+        switch field {
+        case let .interfaces(value): interfaces = value
+        case let .vpn(value): vpn = value
+        case let .resolvers(value): resolvers = value
+        case let .splitDns(value): splitDns = value
+        case let .proxy(value): proxy = value
+        case let .wifiIdentity(value): wifiIdentity = value
+        case let .wifiRadio(value): wifiRadio = value
+        case let .ipStack(value): ipStack = value
+        case let .path(value): path = value
+        case let .captivePortal(value): captivePortal = value
+        case let .resolution(result):
+            upsert(\.resolution, result, key: { $0.domain },
+                   rowKey: "resolution:\(result.domain)", generation: generation)
+        case let .ping(group, result):
+            mergePing(group, result, generation: generation)
+        case let .connect(group, result):
+            if group == .domainReachability {
+                upsert(\.domainReachability, result, key: { $0.target },
+                       rowKey: "domainReachability:\(result.target)", generation: generation)
+            }
+        case let .groupComplete(group):
+            completedGroups.insert(group)
+            groupCompleteGeneration[group] = generation
+        }
+    }
+
+    private mutating func mergePing(_ group: ProbeGroup, _ result: PingResult, generation: Int) {
+        switch group {
+        case .reachability:
+            upsert(\.reachability, result, key: { $0.target },
+                   rowKey: "reachability:\(result.target)", generation: generation)
+        case .reachabilityV6:
+            upsert(\.reachabilityV6, result, key: { $0.target },
+                   rowKey: "reachabilityV6:\(result.target)", generation: generation)
+        case .gatewayReachability, .nameserverReachability:
+            break // not surfaced in this UI
+        case .domainReachability, .nameserverConnect, .resolution:
+            break // never delivered as a ping
+        }
     }
 }
 
-/// How confident netcheck is that the machine has a working internet
-/// connection. Mirrors `netstatus::status::confidence_from` (Rust) so
-/// both UIs agree on the tiering — see `vpnScopedDomains` above for the
-/// same mirroring pattern.
+/// Whether the machine has working internet — the app's presentation
+/// wrapper over `NetStatus.Connectivity`.
 enum ConnectionConfidence {
     case online
     case limited
     case offline
-}
 
-extension ConnectionConfidence {
+    init(_ connectivity: Connectivity) {
+        switch connectivity {
+        case .online: self = .online
+        case .limited: self = .limited
+        case .offline: self = .offline
+        }
+    }
+
     var label: String {
         switch self {
-        case .online: return "Online"
-        case .limited: return "Limited"
-        case .offline: return "Offline"
+        case .online: "Online"
+        case .limited: "Limited"
+        case .offline: "Offline"
         }
     }
 
     var icon: String {
         switch self {
-        case .online: return "checkmark.circle.fill"
-        case .limited: return "exclamationmark.circle.fill"
-        case .offline: return "xmark.circle.fill"
+        case .online: "checkmark.circle.fill"
+        case .limited: "exclamationmark.circle.fill"
+        case .offline: "xmark.circle.fill"
         }
     }
 
     var color: Color {
         switch self {
-        case .online: return .green
-        case .limited: return .yellow
-        case .offline: return .red
+        case .online: .green
+        case .limited: .yellow
+        case .offline: .red
         }
-    }
-}
-
-/// Rolls up whether DNS resolution, ICMP reachability, and TCP connect
-/// each had at least one success into a single confidence tier.
-private func confidenceFrom(dnsOk: Bool, pingOk: Bool, tcpOk: Bool) -> ConnectionConfidence {
-    switch [dnsOk, pingOk, tcpOk].filter({ $0 }).count {
-    case 3, 2: return .online
-    case 1: return .limited
-    default: return .offline
     }
 }
 
 extension PartialNetworkStatus {
-    /// `nil` until resolution, both reachability probes, and domain
-    /// reachability have all arrived.
+    /// `nil` until resolution, both reachability probes, domain
+    /// reachability, and the captive-portal probe have all fully drained —
+    /// a group still mid-stream would misreport, and a missing
+    /// captive-portal reading would skip the cap.
     var confidence: ConnectionConfidence? {
-        guard let resolution, let reachability, let reachabilityV6, let domainReachability else {
+        guard Self.confidenceGroups.isSubset(of: completedGroups), let captivePortal else {
             return nil
         }
-        let dnsOk = resolution.contains { $0.resolved }
-        let pingOk = reachability.contains { $0.reachable } || reachabilityV6.contains { $0.reachable }
-        let tcpOk = domainReachability.contains { $0.reachable }
-        return confidenceFrom(dnsOk: dnsOk, pingOk: pingOk, tcpOk: tcpOk)
+        let dnsOk = NetworkStatus.majorityOk(resolution) { $0.resolved }
+        let pingOk = NetworkStatus.majorityOk(reachability) { $0.reachable }
+            || NetworkStatus.majorityOk(reachabilityV6) { $0.reachable }
+        let tcpOk = NetworkStatus.majorityOk(domainReachability) { $0.reachable }
+        let base = NetworkStatus.classify(dnsOk: dnsOk, pingOk: pingOk, tcpOk: tcpOk)
+        if captivePortal == .detected, base == .online {
+            return ConnectionConfidence(.limited)
+        }
+        return ConnectionConfidence(base)
     }
 }

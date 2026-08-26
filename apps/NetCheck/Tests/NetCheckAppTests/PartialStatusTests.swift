@@ -1,154 +1,104 @@
-import Foundation
-import Testing
 @testable import NetCheckApp
-
-struct VpnScopedDomainsTests {
-    private func resolver(
-        domain: String? = nil,
-        searchDomains: [String] = [],
-        ifName: String? = nil,
-        scoped: Bool = true
-    ) -> Resolver {
-        Resolver(
-            domain: domain,
-            searchDomains: searchDomains,
-            nameservers: ["10.0.0.1"],
-            ifIndex: nil,
-            ifName: ifName,
-            scoped: scoped,
-            reachable: true
-        )
-    }
-
-    @Test func includesScopedUtunResolverDomain() {
-        let resolvers = [resolver(domain: "corp.internal", ifName: "utun3", scoped: true)]
-        #expect(vpnScopedDomains(resolvers) == ["corp.internal"])
-    }
-
-    @Test func fallsBackToFirstSearchDomainWhenDomainIsNil() {
-        let resolvers = [resolver(searchDomains: ["corp.internal", "other"], ifName: "utun3", scoped: true)]
-        #expect(vpnScopedDomains(resolvers) == ["corp.internal"])
-    }
-
-    @Test func excludesUnscopedResolvers() {
-        let resolvers = [resolver(domain: "corp.internal", ifName: "utun3", scoped: false)]
-        #expect(vpnScopedDomains(resolvers) == [])
-    }
-
-    @Test func excludesNonUtunInterfaces() {
-        let resolvers = [resolver(domain: "corp.internal", ifName: "en0", scoped: true)]
-        #expect(vpnScopedDomains(resolvers) == [])
-    }
-
-    @Test func excludesResolversWithNoDomainOrSearchDomain() {
-        let resolvers = [resolver(ifName: "utun3", scoped: true)]
-        #expect(vpnScopedDomains(resolvers) == [])
-    }
-
-    @Test func deduplicatesRepeatedDomains() {
-        let resolvers = [
-            resolver(domain: "corp.internal", ifName: "utun3", scoped: true),
-            resolver(domain: "corp.internal", ifName: "utun4", scoped: true),
-        ]
-        #expect(vpnScopedDomains(resolvers) == ["corp.internal"])
-    }
-}
+import NetStatus
+import Testing
 
 struct PartialNetworkStatusTests {
-    @Test func hasAnyIsFalseWhenEmpty() {
-        #expect(!PartialNetworkStatus().hasAny)
-    }
-
-    @Test func hasAnyIsTrueAfterMergingAField() {
+    @Test func mergeFillsSingleValueFieldsAndNeverBlanksThem() {
         var status = PartialNetworkStatus()
-        status.merge(envelope(splitDns: true))
+        #expect(!status.hasAny)
+
+        status.merge(.splitDns(true), generation: 1)
+        #expect(status.splitDns == true)
+
+        status.merge(.ipStack(.dualStack), generation: 1)
+        #expect(status.ipStack == .dualStack)
         #expect(status.hasAny)
     }
 
-    @Test func mergeSetsFieldFromEnvelope() {
+    @Test func mergePathFillsPathAndCountsTowardHasAny() {
         var status = PartialNetworkStatus()
-        status.merge(envelope(splitDns: true))
-        #expect(status.splitDns == true)
+        status.merge(
+            .path(
+                .init(
+                    status: .satisfied, primaryInterface: .wifi, expensive: true,
+                    constrained: false, supportsIPv4: true, supportsIPv6: true
+                )
+            ),
+            generation: 1
+        )
+        #expect(status.path?.primaryInterface == .wifi)
+        #expect(status.path?.expensive == true)
+        #expect(status.hasAny)
     }
 
-    @Test func mergeLeavesUnrelatedFieldsUntouched() {
+    @Test func listFieldsUpsertByTargetKeepingPosition() {
         var status = PartialNetworkStatus()
-        status.merge(envelope(splitDns: true))
-        #expect(status.vpn == nil)
+        status.merge(
+            .ping(group: .reachability, result: .init(target: "1.1.1.1", reachable: false, rttMs: nil)),
+            generation: 1
+        )
+        status.merge(
+            .ping(group: .reachability, result: .init(target: "8.8.8.8", reachable: true, rttMs: 5)),
+            generation: 1
+        )
+        status.merge(
+            .ping(group: .reachability, result: .init(target: "1.1.1.1", reachable: true, rttMs: 12)),
+            generation: 2
+        )
+
+        #expect(status.reachability.map(\.target) == ["1.1.1.1", "8.8.8.8"])
+        #expect(status.reachability[0].reachable)
+        #expect(status.reachability[0].rttMs == 12)
     }
 
-    @Test func mergeDoesNotBlankAPreviouslySetFieldToNil() {
+    @Test func isPendingTracksRowFreshnessAgainstGeneration() {
         var status = PartialNetworkStatus()
-        status.merge(envelope(splitDns: true))
-        status.merge(envelope(splitDns: nil))
-        #expect(status.splitDns == true)
+        status.merge(.resolution(.init(domain: "a", resolved: true, addresses: ["1"], durationMs: 1)), generation: 3)
+        #expect(!status.isPending("resolution:a", asOf: 3))
+        #expect(status.isPending("resolution:a", asOf: 4))
     }
 
-    @Test func mergeOverwritesWithNewValue() {
+    @Test func confidenceNilUntilAllGroupsCompleteAndCaptivePortalKnown() {
         var status = PartialNetworkStatus()
-        status.merge(envelope(splitDns: true))
-        status.merge(envelope(splitDns: false))
-        #expect(status.splitDns == false)
-    }
+        for target in ["1.1.1.1", "8.8.8.8"] {
+            status.merge(
+                .ping(group: .reachability, result: .init(target: target, reachable: true, rttMs: 1)),
+                generation: 1
+            )
+            status.merge(
+                .connect(group: .domainReachability, result: .init(
+                    target: target,
+                    port: 443,
+                    reachable: true,
+                    rttMs: 1
+                )),
+                generation: 1
+            )
+            status.merge(
+                .resolution(.init(domain: target, resolved: true, addresses: ["x"], durationMs: 1)),
+                generation: 1
+            )
+        }
+        status.merge(.groupComplete(.reachability), generation: 1)
+        status.merge(.groupComplete(.reachabilityV6), generation: 1)
+        status.merge(.groupComplete(.domainReachability), generation: 1)
+        status.merge(.groupComplete(.resolution), generation: 1)
+        #expect(status.confidence == nil) // captive portal still unknown
 
-    @Test func mergeSetsCaptivePortalFromEnvelope() {
-        var status = PartialNetworkStatus()
-        let json: [String: Any] = ["CaptivePortal": "Detected"]
-        let data = try! JSONSerialization.data(withJSONObject: json)
-        let envelope = try! JSONDecoder().decode(StatusFieldEnvelope.self, from: data)
-        status.merge(envelope)
-        #expect(status.captivePortal == .detected)
-    }
+        status.merge(.captivePortal(.clear), generation: 1)
+        #expect(status.confidence == .online)
 
-    private func envelope(splitDns: Bool?) -> StatusFieldEnvelope {
-        let json: [String: Any] = splitDns.map { ["SplitDns": $0] } ?? [:]
-        let data = try! JSONSerialization.data(withJSONObject: json)
-        return try! JSONDecoder().decode(StatusFieldEnvelope.self, from: data)
-    }
-}
-
-struct ConnectionConfidenceTests {
-    private func status(
-        dnsOk: Bool,
-        pingOk: Bool,
-        tcpOk: Bool
-    ) -> PartialNetworkStatus {
-        var status = PartialNetworkStatus()
-        status.resolution = [ResolutionResult(domain: "example.com", resolved: dnsOk, addresses: [], durationMs: nil)]
-        status.reachability = [PingResult(target: "1.1.1.1", reachable: pingOk, rttMs: nil)]
-        status.reachabilityV6 = [PingResult(target: "::1", reachable: false, rttMs: nil)]
-        status.domainReachability = [ConnectResult(target: "example.com", port: 443, reachable: tcpOk, rttMs: nil)]
-        return status
-    }
-
-    @Test func nilWhenSignalsMissing() {
-        #expect(PartialNetworkStatus().confidence == nil)
-    }
-
-    @Test func onlineWhenAllSignalsOk() {
-        #expect(status(dnsOk: true, pingOk: true, tcpOk: true).confidence == .online)
-    }
-
-    @Test func onlineWhenTwoSignalsOk() {
-        #expect(status(dnsOk: true, pingOk: true, tcpOk: false).confidence == .online)
-        #expect(status(dnsOk: true, pingOk: false, tcpOk: true).confidence == .online)
-        #expect(status(dnsOk: false, pingOk: true, tcpOk: true).confidence == .online)
-    }
-
-    @Test func limitedWhenOneSignalOk() {
-        #expect(status(dnsOk: true, pingOk: false, tcpOk: false).confidence == .limited)
-    }
-
-    @Test func offlineWhenNoSignalsOk() {
-        #expect(status(dnsOk: false, pingOk: false, tcpOk: false).confidence == .offline)
-    }
-
-    @Test func pingOkCountsV6OnlyReachability() {
-        var status = PartialNetworkStatus()
-        status.resolution = [ResolutionResult(domain: "example.com", resolved: false, addresses: [], durationMs: nil)]
-        status.reachability = [PingResult(target: "1.1.1.1", reachable: false, rttMs: nil)]
-        status.reachabilityV6 = [PingResult(target: "::1", reachable: true, rttMs: nil)]
-        status.domainReachability = [ConnectResult(target: "example.com", port: 443, reachable: false, rttMs: nil)]
+        status.merge(.captivePortal(.detected), generation: 1)
         #expect(status.confidence == .limited)
+    }
+
+    @Test func isRefreshCompleteWaitsForTheFourConfidenceGroups() {
+        var status = PartialNetworkStatus()
+        status.merge(.groupComplete(.reachability), generation: 5)
+        status.merge(.groupComplete(.reachabilityV6), generation: 5)
+        status.merge(.groupComplete(.domainReachability), generation: 5)
+        #expect(!status.isRefreshComplete(asOf: 5))
+        status.merge(.groupComplete(.resolution), generation: 5)
+        #expect(status.isRefreshComplete(asOf: 5))
     }
 }

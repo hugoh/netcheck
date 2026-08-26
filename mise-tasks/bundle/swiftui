@@ -1,20 +1,10 @@
 #!/usr/bin/env bash
-#MISE description="Build apps/NetCheck in release mode, wrap it in a signed .app bundle with the netcheck-core binary embedded"
-#MISE depends=["build:netcheck-core-release"]
+#MISE description="Build NetCheck in release mode and wrap it in an ad-hoc-signed .app bundle"
 set -euo pipefail
-
-# Wraps the SwiftUI app in a standard macOS .app bundle. Embeds the slim
-# netcheck-core binary (JSON subcommands only, no TUI deps) next to the app
-# executable so StatusFetcher's bundle-relative lookup finds it without
-# relying on PATH or a relative-to-cwd guess — a double-clicked .app has
-# neither.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SWIFT_DIR="$ROOT_DIR/apps/NetCheck"
 APP_NAME="NetCheck"
-# Distinct from EXE_NAME's lowercase "netcheck" CLI binary embedded alongside
-# it — APFS is case-insensitive by default, so identical-but-for-case names
-# in the same Contents/MacOS/ directory would collide.
 EXE_NAME="NetCheckApp"
 BUNDLE_ID="net.larve.netcheck"
 VERSION="${NETCHECK_VERSION:-0.0.0}"
@@ -26,14 +16,12 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
 echo "Building $APP_NAME (release)..."
-(cd "$SWIFT_DIR" && swift build -c release)
+(cd "$SWIFT_DIR" && swift build -c release --product "$EXE_NAME")
 
 echo "Assembling $APP_DIR..."
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
-
 cp "$BUILD_DIR/$EXE_NAME" "$MACOS_DIR/$EXE_NAME"
-cp "$ROOT_DIR/target/release/netcheck-core" "$MACOS_DIR/netcheck"
 
 cat >"$CONTENTS_DIR/Info.plist" <<INFOPLIST
 <?xml version="1.0" encoding="UTF-8"?>

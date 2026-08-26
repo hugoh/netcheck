@@ -1,48 +1,25 @@
-amends "package://github.com/jdx/hk/releases/download/v1.56.0/hk@1.56.0#/Config.pkl"
-import "package://github.com/jdx/hk/releases/download/v1.56.0/hk@1.56.0#/Builtins.pkl"
+amends "package://github.com/jdx/hk/releases/download/v1.56.1/hk@1.56.1#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v1.56.1/hk@1.56.1#/Builtins.pkl"
 import "package://github.com/hugoh/hk-config/releases/download/v1.4.1/hk-config@1.4.1#/base.pkl" as Base
 
 min_hk_version = Base.min_hk_version
 
-// cargo_fmt/cargo_clippy/cargo_test are excluded from the `ci` profile: CI
-// runs `hk check --profile ci` on a cheap ubuntu runner for the
-// language-agnostic lint sweep only, and checks Rust itself directly (with
-// the toolchain already present) in the macOS build/test job instead of
-// installing Rust a second time just for hk. Local `pre-commit`/`pre-push`
-// (no --profile flag) still run all three for full local coverage.
+// Swift build/lint/format/test don't run through hk: `check:swiftlint`,
+// `check:swiftformat`, `check:periphery`, and `test:swift` need a Swift
+// toolchain (SourceKit) that hk's ubuntu `ci` runner doesn't have —
+// ci.yml's `check-macos` job runs them instead. hk's ubuntu `ci` profile
+// stays language-agnostic (rumdl/gitleaks/actionlint/typos/shellcheck/etc).
+// `mise run check` is the local aggregate that does include the Swift steps.
 local linters = new Mapping<String, Step> {
     ...Base.base
     ...Base.shell
-    ["cargo_fmt"] = {
-        glob = List("**/*.rs")
-        check = "mise run check:cargo-fmt"
-        fix = "cargo fmt --all"
-        profiles = List("!ci")
-    }
-    ["cargo_clippy"] = {
-        glob = List("**/*.rs", "**/Cargo.toml")
-        check = "mise run check:cargo-clippy"
-        profiles = List("!ci")
-    }
-    ["cargo_test"] = {
-        glob = List("**/*.rs", "**/Cargo.toml")
-        check = "mise run check:cargo-test"
-        profiles = List("!ci")
-    }
-    // Deny-listed licenses/duplicate-version/unknown-source lints, config
-    // in deny.toml. Excluded from `ci` for the same reason as
-    // cargo_fmt/cargo_clippy/cargo_test: CI's ubuntu lint job doesn't have
-    // the Rust toolchain (or these cargo subcommands) installed.
-    ["cargo_deny"] = {
-        glob = List("**/Cargo.toml", "**/Cargo.lock", "deny.toml")
-        check = "mise run check:cargo-deny"
-        profiles = List("!ci")
-    }
-    // RustSec advisory-database scan against Cargo.lock.
-    ["cargo_audit"] = {
-        glob = List("**/Cargo.lock")
-        check = "mise run check:cargo-audit"
-        profiles = List("!ci")
+    // Hashes scripts/gen_icon.swift + mise-tasks/icon/gen and compares
+    // against assets/.icon-source.sha256 — pure cat/shasum, no swift/sips/
+    // iconutil, so it runs fine on ubuntu and doesn't need excluding from
+    // `ci`.
+    ["icon"] = {
+        glob = List("scripts/gen_icon.swift", "mise-tasks/icon/gen", "assets/.icon-source.sha256")
+        check = "mise run check:icon"
     }
     // Plain `cog check` (whole history), not `--from-latest-tag`: this repo
     // has no release tag yet, and `--from-latest-tag` hard-errors with

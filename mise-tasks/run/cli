@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-#MISE description="Run a netcheck JSON subcommand (defaults to 'status'; pass another subcommand: mise run run:cli -- wifi)"
+#MISE description="Build and run the netcheck CLI (pass args after --)"
 set -euo pipefail
 
-if [ "$#" -eq 0 ]; then
-	set -- status
-fi
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-cargo run -p netcheck --bin netcheck --features tui -- "$@"
+exec swift run --package-path "$ROOT_DIR/apps/NetCheck" netcheck "$@"

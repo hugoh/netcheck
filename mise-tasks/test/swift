@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+#MISE description="Run the NetCheck.app Swift test suite"
+#MISE sources=["apps/NetCheck/Package.swift", "apps/NetCheck/Package.resolved", "apps/NetCheck/Sources/**", "apps/NetCheck/Tests/**"]
+#MISE outputs={auto=true}
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+swift test --package-path "$ROOT_DIR/apps/NetCheck"

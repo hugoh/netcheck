@@ -4,7 +4,7 @@ import AppKit
 /// automatically foreground the window — the process launches but nothing
 /// visibly appears. Explicitly activating fixes that.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    func applicationDidFinishLaunching(_: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
     }

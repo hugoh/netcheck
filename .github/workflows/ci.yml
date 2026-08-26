@@ -10,10 +10,8 @@ on:
 permissions: {}
 
 jobs:
-  # Fast, cheap lint sweep on Linux: rumdl/biome/gitleaks/actionlint/typos/
-  # shellcheck/etc. Deliberately doesn't touch the Rust toolchain — hk.pkl
-  # excludes cargo_fmt/cargo_clippy/cargo_test from the `ci` profile so this
-  # job never has to install Rust just to run hk.
+  # Fast, cheap lint sweep on Linux: rumdl/gitleaks/actionlint/typos/
+  # shellcheck/etc. Language-agnostic — no toolchain install.
   hk:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -32,34 +30,19 @@ jobs:
           fetch-depth: "0"
       - uses: hugoh/gh-workflows/hk-check@e3deb909891d6fc8089311f2e91e85796eb6c725 # v1.9.2
 
-  # Rust checks plus the Swift unit tests, on macOS because this project's
-  # whole reason to exist is macOS-specific behavior (scutil, ping, netdev's
-  # VPN detection). A Linux build would only prove it compiles, not that it
-  # works. Split from `build` below so the two run concurrently instead of
-  # the app-bundling step waiting behind every cargo check.
-  check:
+  # SwiftLint + build (warnings-as-errors) + test + periphery, on macOS —
+  # netcheck's whole reason to exist is macOS-specific behavior
+  # (SystemConfiguration, CoreWLAN, the routing table, ICMP).
+  check-macos:
     runs-on: macos-latest
     timeout-minutes: 30
     concurrency:
-      group: ci-check-${{ github.event.pull_request.number || github.ref }}
+      group: ci-check-macos-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: true
     permissions:
       contents: read
     steps:
       - uses: hugoh/gh-workflows/setup@e3deb909891d6fc8089311f2e91e85796eb6c725 # v1.9.2
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - name: Ensure rustfmt/clippy components
-        run: rustup component add rustfmt clippy
-      - name: Cargo fmt
-        run: mise run check:cargo-fmt
-      - name: Cargo clippy
-        run: mise run check:cargo-clippy
-      - name: Cargo test
-        run: mise run check:cargo-test
-      - name: Cargo deny
-        run: mise run check:cargo-deny
-      - name: Cargo audit
-        run: mise run check:cargo-audit
       - name: Cache Swift build
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
@@ -67,13 +50,21 @@ jobs:
           key: swift-build-${{ runner.os }}-${{ hashFiles('apps/NetCheck/Package.swift', 'apps/NetCheck/Package.resolved', 'apps/NetCheck/Sources/**', 'apps/NetCheck/Tests/**') }}
           restore-keys: |
             swift-build-${{ runner.os }}-
+      - name: SwiftLint
+        run: mise run check:swiftlint
+      - name: SwiftFormat
+        run: mise run check:swiftformat
+      - name: Swift build
+        run: mise run check:build
       - name: Swift test
-        run: mise run check:swift-test
+        run: mise run test:swift
+      - name: Swift test (live)
+        run: mise run test-live
+        continue-on-error: true
+      - name: Periphery
+        run: mise run check:periphery
 
-  # Release build + app bundle. `mise run bundle:swiftui` builds the release
-  # netcheck CLI and the SwiftUI app itself (it doesn't reuse anything from
-  # `check`, which only builds dev/test profiles), so this runs as its own
-  # job in parallel with `check` rather than after it.
+  # Release build + app bundle. Runs in parallel with check-macos.
   build:
     runs-on: macos-latest
     timeout-minutes: 30
@@ -84,16 +75,17 @@ jobs:
       contents: read
     steps:
       - uses: hugoh/gh-workflows/setup@e3deb909891d6fc8089311f2e91e85796eb6c725 # v1.9.2
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Cache Swift build
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
           path: apps/NetCheck/.build
-          key: swift-build-${{ runner.os }}-${{ hashFiles('apps/NetCheck/Package.swift', 'apps/NetCheck/Package.resolved', 'apps/NetCheck/Sources/**') }}
+          key: swift-release-${{ runner.os }}-${{ hashFiles('apps/NetCheck/Package.swift', 'apps/NetCheck/Package.resolved', 'apps/NetCheck/Sources/**') }}
           restore-keys: |
-            swift-build-${{ runner.os }}-
+            swift-release-${{ runner.os }}-
       - name: Bundle NetCheck.app
         run: mise run bundle:swiftui
+      - name: Build netcheck CLI
+        run: mise run build:cli
       - name: Upload NetCheck.app
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -101,8 +93,8 @@ jobs:
           path: target/NetCheck.app
           retention-days: 14
 
-  # Static project site (site/), deployed to GitHub Pages. Only on pushes
-  # to main — PRs just get the `check`/`build` jobs above.
+  # Static landing page (site/), deployed to GitHub Pages. Only on pushes to
+  # main — PRs just get the check/build jobs above.
   pages-build:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -111,8 +103,8 @@ jobs:
       contents: read
     steps:
       - uses: hugoh/gh-workflows/setup@e3deb909891d6fc8089311f2e91e85796eb6c725 # v1.9.2
-      - name: Build site
-        run: mise run pages-build
+      - name: Assemble site
+        run: mise run build:pages
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0
         with:

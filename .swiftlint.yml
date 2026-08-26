@@ -1,0 +1,15 @@
+excluded:
+  - apps/NetCheck/.build
+
+# SwiftFormat's `trailingCommas` rule adds trailing commas on multiline
+# literals; let it own that decision rather than have the two tools fight.
+disabled_rules:
+  - trailing_comma
+
+# Short, single-purpose closure/map parameters (v, r, c, p, ok, on, fm, up,
+# g) are this codebase's normal style throughout ContentView/PartialStatus/
+# StatusFetcher — not a naming problem worth flagging.
+identifier_name:
+  min_length:
+    warning: 1
+    error: 1
