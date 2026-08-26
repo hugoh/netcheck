@@ -687,6 +687,31 @@ mod tests {
         counts
     }
 
+    /// Asserts `received` has a `GroupComplete` for exactly the four
+    /// confidence-relevant groups — shared by the `collect_streaming` and
+    /// `collect_confidence_streaming` coverage tests, which both send the
+    /// same four groups' worth of probes and must agree on what "complete"
+    /// means for confidence.
+    fn assert_confidence_groups_completed(received: &[StatusField]) {
+        let complete_groups: HashSet<ProbeGroup> = received
+            .iter()
+            .filter_map(|f| match f {
+                StatusField::GroupComplete(g) => Some(*g),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            complete_groups,
+            HashSet::from([
+                ProbeGroup::Reachability,
+                ProbeGroup::ReachabilityV6,
+                ProbeGroup::Resolution,
+                ProbeGroup::DomainReachability,
+            ]),
+            "expected GroupComplete for exactly the four confidence-relevant groups"
+        );
+    }
+
     /// Guards the send side of `collect_streaming`: every single-value
     /// `StatusField` variant must be sent exactly once, every target-list
     /// item must be sent once per target in its group's default target
@@ -764,23 +789,7 @@ mod tests {
             "expected one Resolution message per resolution target"
         );
 
-        let complete_groups: HashSet<ProbeGroup> = received
-            .iter()
-            .filter_map(|f| match f {
-                StatusField::GroupComplete(g) => Some(*g),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            complete_groups,
-            HashSet::from([
-                ProbeGroup::Reachability,
-                ProbeGroup::ReachabilityV6,
-                ProbeGroup::Resolution,
-                ProbeGroup::DomainReachability,
-            ]),
-            "expected GroupComplete for exactly the four confidence-relevant groups"
-        );
+        assert_confidence_groups_completed(&received);
     }
 
     /// Mirrors `collect_streaming_sends_every_status_field_and_probe_group`
@@ -821,22 +830,7 @@ mod tests {
             "expected one message per target across the four confidence groups, plus 4 GroupComplete: {received:?}"
         );
 
-        let complete_groups: HashSet<ProbeGroup> = received
-            .iter()
-            .filter_map(|f| match f {
-                StatusField::GroupComplete(g) => Some(*g),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            complete_groups,
-            HashSet::from([
-                ProbeGroup::Reachability,
-                ProbeGroup::ReachabilityV6,
-                ProbeGroup::Resolution,
-                ProbeGroup::DomainReachability,
-            ]),
-        );
+        assert_confidence_groups_completed(&received);
     }
 
     /// Guards `schema/status-field.schema.json` (the `stream`/`watch`
