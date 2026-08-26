@@ -32,34 +32,53 @@ jobs:
           fetch-depth: "0"
       - uses: hugoh/gh-workflows/hk-check@e3deb909891d6fc8089311f2e91e85796eb6c725 # v1.9.2
 
-  # Rust checks plus the Swift unit tests, on macOS because this project's
-  # whole reason to exist is macOS-specific behavior (scutil, ping, netdev's
-  # VPN detection). A Linux build would only prove it compiles, not that it
-  # works. Split from `build` below so the two run concurrently instead of
-  # the app-bundling step waiting behind every cargo check.
-  check:
+  # cargo-fmt/deny/audit don't need to compile the crate (fmt is syntax-only,
+  # deny/audit only inspect Cargo.toml/Cargo.lock metadata), so they run on
+  # Linux even though the crate itself is macOS-only (core-foundation,
+  # system-configuration, objc2-core-wlan with no cfg(target_os) gating) and
+  # wouldn't build here.
+  check-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: ci-check-linux-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+    steps:
+      - uses: hugoh/gh-workflows/setup@e3deb909891d6fc8089311f2e91e85796eb6c725 # v1.9.2
+      - name: Ensure rustfmt component
+        run: rustup component add rustfmt
+      - name: Cargo fmt
+        run: mise run check:cargo-fmt
+      - name: Cargo deny
+        run: mise run check:cargo-deny
+      - name: Cargo audit
+        run: mise run check:cargo-audit
+
+  # Clippy (needs to compile the crate) and the Rust/Swift tests, on macOS
+  # because this project's whole reason to exist is macOS-specific behavior
+  # (scutil, ping, netdev's VPN detection) — a Linux build would only prove
+  # it compiles, not that it works, and it doesn't even compile there (see
+  # check-linux above). Split from `build` below so the two run concurrently
+  # instead of the app-bundling step waiting behind every cargo check.
+  check-macos:
     runs-on: macos-latest
     timeout-minutes: 30
     concurrency:
-      group: ci-check-${{ github.event.pull_request.number || github.ref }}
+      group: ci-check-macos-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: true
     permissions:
       contents: read
     steps:
       - uses: hugoh/gh-workflows/setup@e3deb909891d6fc8089311f2e91e85796eb6c725 # v1.9.2
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - name: Ensure rustfmt/clippy components
-        run: rustup component add rustfmt clippy
-      - name: Cargo fmt
-        run: mise run check:cargo-fmt
+      - name: Ensure clippy component
+        run: rustup component add clippy
       - name: Cargo clippy
         run: mise run check:cargo-clippy
       - name: Cargo test
-        run: mise run check:cargo-test
-      - name: Cargo deny
-        run: mise run check:cargo-deny
-      - name: Cargo audit
-        run: mise run check:cargo-audit
+        run: mise run test:rust
       - name: Cache Swift build
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
@@ -68,7 +87,7 @@ jobs:
           restore-keys: |
             swift-build-${{ runner.os }}-
       - name: Swift test
-        run: mise run check:swift-test
+        run: mise run test:swift
 
   # Release build + app bundle. `mise run bundle:swiftui` builds the release
   # netcheck CLI and the SwiftUI app itself (it doesn't reuse anything from

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#MISE description="Build release, --locked binaries for netcheck and netcheck-core"
+#MISE depends=["build:tui-release", "build:netcheck-core-release"]
+set -euo pipefail
+
+# Two separate invocations, not one combined --workspace build: netcheck and
+# netcheck-core have genuinely different feature sets (tui on/off), so unlike
+# the old CLI/TUI/GUI split (three crates, identical features, worth sharing
+# one unit graph) there's no shared work to lose here — and building
+# netcheck-core in its own invocation, with the tui feature never requested,
+# guarantees ratatui/crossterm aren't even compiled into its dependency
+# graph, not just dead-code-eliminated from the link.

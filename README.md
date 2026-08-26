@@ -1,4 +1,4 @@
-# netcheck
+# ![netcheck icon](assets/icon-1024.png) netcheck
 
 A holistic view of network status on macOS: interfaces, VPN/tunnel state,
 DNS resolvers (including split-tunnel/split-DNS), and reachability — the
@@ -56,7 +56,7 @@ Both are Apple Silicon (arm64) only.
 ### From source
 
 ```sh
-mise run build:netcheck  # netcheck
+mise run build:tui       # netcheck
 mise run build:app       # dev build of the native NetCheck.app
 mise run bundle:swiftui  # signed release .app bundle of NetCheck
 ```

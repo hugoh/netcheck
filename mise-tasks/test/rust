@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Run the Rust test suite"
+#MISE sources=["**/*.rs", "**/Cargo.toml", "Cargo.lock"]
+#MISE outputs={auto=true}
+set -euo pipefail
+
+cargo test --workspace --all-features

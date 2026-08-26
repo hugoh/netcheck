@@ -18,13 +18,32 @@
 }
 
 .topnav .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
   margin-right: auto;
   color: var(--pico-h1-color, var(--pico-color));
   font-weight: 700;
 }
 
+.topnav .brand img {
+  border-radius: 6px;
+}
+
 h1, h2, h3 {
   scroll-margin-top: 4.5rem;
+}
+
+h1 {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+h1 img {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 6px;
 }
 
 .screenshot {

@@ -13,3 +13,4 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 mkdir -p "$ROOT_DIR/site/screenshots"
 cp "$ROOT_DIR/assets/screenshots/"*.png "$ROOT_DIR/site/screenshots/"
+cp "$ROOT_DIR/assets/icon-1024.png" "$ROOT_DIR/site/favicon.png"

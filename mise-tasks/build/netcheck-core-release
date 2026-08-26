@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Build a release, --locked netcheck-core binary"
+#MISE depends=["build:netcheck-core --release --locked"]
+set -euo pipefail

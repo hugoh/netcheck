@@ -2,6 +2,7 @@ mod captive_portal;
 mod concurrent;
 mod connect;
 mod dns;
+mod gateway;
 mod interfaces;
 mod ip_stack;
 mod proxy;
@@ -19,7 +20,8 @@ pub const VERSION: &str = env!("NETCHECK_VERSION");
 
 pub use captive_portal::{CaptivePortalStatus, check_captive_portal};
 pub use connect::{ConnectResult, connect, connect_all};
-pub use dns::{Resolver, has_split_dns, list_resolvers, vpn_scoped_domains};
+pub use dns::{Resolver, has_split_dns, list_resolvers, nameserver_ips, vpn_scoped_domains};
+pub use gateway::default_gateway_ips;
 pub use interfaces::{
     AddressClass, Interface, InterfaceClass, classify_address, classify_interface, list_interfaces,
 };

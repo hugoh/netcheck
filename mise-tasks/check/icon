@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+#MISE description="Verify assets/icon-1024.png and assets/AppIcon.icns are up-to-date with scripts/gen_icon.swift"
+set -euo pipefail
+
+# Compares a hash of the generating source (scripts/gen_icon.swift and this
+# repo's icon:gen script) against the hash icon:gen last recorded, rather
+# than re-rendering and diffing the binary output: sips/iconutil/AppKit
+# rendering isn't bit-reproducible across macOS versions, so a checksum of
+# freshly-rendered output vs. the committed assets gave false positives
+# whenever CI's macOS version differed from the machine that last ran
+# icon:gen.
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ASSETS_DIR="$ROOT_DIR/assets"
+
+recorded_file="$ASSETS_DIR/.icon-source.sha256"
+if [ ! -f "$recorded_file" ]; then
+	echo "assets/.icon-source.sha256 is missing" >&2
+	echo "run 'mise run icon:gen' and commit the result" >&2
+	exit 1
+fi
+
+current_hash=$(cat "$ROOT_DIR/scripts/gen_icon.swift" "$ROOT_DIR/mise-tasks/icon/gen" | shasum -a 256 | awk '{print $1}')
+recorded_hash=$(cat "$recorded_file")
+
+if [ "$current_hash" != "$recorded_hash" ]; then
+	echo "assets/icon-1024.png and assets/AppIcon.icns are stale (source changed since last icon:gen)" >&2
+	echo "run 'mise run icon:gen' and commit the result" >&2
+	exit 1
+fi
