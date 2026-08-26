@@ -15,14 +15,13 @@ min_hk_version = Base.min_hk_version
 local linters = new Mapping<String, Step> {
     ...Base.base
     ...Base.shell
-    // Regenerates the icon into a scratch dir and checksums it against
-    // assets/icon-1024.png / assets/AppIcon.icns. Needs swift/sips/iconutil
-    // (macOS-only), so excluded from `ci` like the cargo_* steps above —
-    // CI's macOS `check` job runs it directly via `mise run check:icon`.
+    // Hashes scripts/gen_icon.swift + mise-tasks/icon/gen and compares
+    // against assets/.icon-source.sha256 — pure cat/shasum, no swift/sips/
+    // iconutil, so unlike the cargo_* steps above this runs fine on ubuntu
+    // and doesn't need excluding from `ci`.
     ["icon"] = {
-        glob = List("scripts/gen_icon.swift", "assets/icon-1024.png", "assets/AppIcon.icns")
+        glob = List("scripts/gen_icon.swift", "mise-tasks/icon/gen", "assets/.icon-source.sha256")
         check = "mise run check:icon"
-        profiles = List("!ci")
     }
     // Plain `cog check` (whole history), not `--from-latest-tag`: this repo
     // has no release tag yet, and `--from-latest-tag` hard-errors with
