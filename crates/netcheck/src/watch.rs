@@ -39,11 +39,13 @@ impl Default for Intervals {
 
 /// How much a triggered check should actually probe. A config change means
 /// something in interfaces/VPN/proxy/Wi-Fi/DNS genuinely may have changed,
-/// so it warrants a full recheck; a poll tick exists only to catch failures
-/// that produce no config event at all (a blackholed route), so it only
-/// needs the confidence-determining probes — re-running everything else on
-/// every poll would be pure waste (notably `wifi_identity`'s
-/// `system_profiler` shell-out, which nothing in a poll tick could change).
+/// so it warrants a full recheck. Most poll ticks only need the
+/// confidence-determining probes — re-running everything else every 60s
+/// would be pure waste (notably `wifi_identity`'s `system_profiler`
+/// shell-out). But every `POLL_FULL_EVERY` ticks the poll thread does fire
+/// a `Full` anyway, to catch a descriptive-config change that produced no
+/// OS config event (a captive-portal sign-in on unchanged Wi-Fi, a silent
+/// resolver swap) — see `poll_tick`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckScope {
     Full,
@@ -205,21 +207,39 @@ fn interval_for(intervals: Intervals, health: u8) -> Duration {
     }
 }
 
-/// What the poll thread should fire (if anything) on one loop iteration,
-/// given whether it was enabled on the previous iteration and is enabled on
-/// this one. `None` means don't fire (and idle-sleep instead). Pulled out of
-/// the poll loop so the false -> true transition (which must always produce
-/// `Full`, not just the thread's very first iteration) is unit-testable
-/// without spinning up real threads/timers.
-fn scope_for_poll_tick(was_enabled: bool, is_enabled: bool) -> Option<CheckScope> {
+/// Confidence-only poll ticks between the poll thread's periodic `Full`
+/// rechecks. The confidence-only tick is the cheap common case; a `Full`
+/// every `POLL_FULL_EVERY` ticks is the safety net for a descriptive-config
+/// change that produced no OS config event — most importantly a
+/// captive-portal sign-in (unchanged Wi-Fi association, so no
+/// `SCDynamicStore` notification), but also e.g. a DHCP renewal that swaps
+/// resolvers without macOS flagging it. At the 60s healthy interval that's
+/// a full recheck about every 5 minutes; at the 10s degraded interval,
+/// roughly every 50s.
+const POLL_FULL_EVERY: u32 = 5;
+
+/// The scope + trigger for one poll-thread iteration (or `None` — don't
+/// fire, idle-sleep instead). `confidence_streak` is how many
+/// confidence-only ticks have fired since the last `Full` one. Pulled out
+/// of the poll loop so its three cases — disabled, the false -> true
+/// transition (always `Full`, not just the thread's very first iteration),
+/// and the periodic-`Full` cadence — are unit-testable without real
+/// threads/timers.
+fn poll_tick(
+    was_enabled: bool,
+    is_enabled: bool,
+    confidence_streak: u32,
+) -> Option<(CheckScope, Trigger)> {
     if !is_enabled {
         return None;
     }
-    Some(if was_enabled {
-        CheckScope::ConfidenceOnly
-    } else {
-        CheckScope::Full
-    })
+    if !was_enabled {
+        return Some((CheckScope::Full, Trigger::Initial));
+    }
+    if confidence_streak >= POLL_FULL_EVERY {
+        return Some((CheckScope::Full, Trigger::Poll));
+    }
+    Some((CheckScope::ConfidenceOnly, Trigger::Poll))
 }
 
 /// Spawns the config-change watcher and the adaptive-poll thread, both
@@ -227,8 +247,8 @@ fn scope_for_poll_tick(was_enabled: bool, is_enabled: bool) -> Option<CheckScope
 /// existing "only manual refresh" behavior when auto-refresh is off. The
 /// config-change watcher always fires with `CheckScope::Full`; the poll
 /// thread fires `CheckScope::Full` the first time it runs after becoming
-/// enabled (there's no config-change data to fall back on yet) and
-/// `CheckScope::ConfidenceOnly` after that (see `CheckScope`).
+/// enabled and every `POLL_FULL_EVERY` ticks thereafter,
+/// `CheckScope::ConfidenceOnly` on the ticks in between (see `poll_tick`).
 ///
 /// If the config-change watcher fails to start (e.g. `SCDynamicStore` setup
 /// rejected in a sandboxed environment), this doesn't fail outright — it
@@ -279,14 +299,14 @@ pub fn spawn_watch_trigger(
         // the config-change watcher, which are gated on `enabled` too)
         // would otherwise go unnoticed until the next poll tick after that.
         let mut was_enabled = false;
+        let mut confidence_streak: u32 = 0;
         loop {
             let is_enabled = enabled.load(Ordering::Relaxed);
-            match scope_for_poll_tick(was_enabled, is_enabled) {
-                Some(scope) => {
-                    let trigger = if was_enabled {
-                        Trigger::Poll
-                    } else {
-                        Trigger::Initial
+            match poll_tick(was_enabled, is_enabled, confidence_streak) {
+                Some((scope, trigger)) => {
+                    confidence_streak = match scope {
+                        CheckScope::ConfidenceOnly => confidence_streak + 1,
+                        CheckScope::Full => 0,
                     };
                     fire(scope, trigger, None);
                     std::thread::sleep(interval_for(intervals, health.load(Ordering::Relaxed)));
@@ -312,14 +332,26 @@ mod tests {
 
     #[test]
     fn first_iteration_fires_full() {
-        assert_eq!(scope_for_poll_tick(false, true), Some(CheckScope::Full));
+        assert_eq!(poll_tick(false, true, 0), Some((CheckScope::Full, Trigger::Initial)));
     }
 
     #[test]
     fn subsequent_enabled_iterations_fire_confidence_only() {
         assert_eq!(
-            scope_for_poll_tick(true, true),
-            Some(CheckScope::ConfidenceOnly)
+            poll_tick(true, true, 0),
+            Some((CheckScope::ConfidenceOnly, Trigger::Poll))
+        );
+    }
+
+    #[test]
+    fn a_full_recheck_fires_once_the_confidence_streak_hits_the_threshold() {
+        assert_eq!(
+            poll_tick(true, true, POLL_FULL_EVERY - 1),
+            Some((CheckScope::ConfidenceOnly, Trigger::Poll))
+        );
+        assert_eq!(
+            poll_tick(true, true, POLL_FULL_EVERY),
+            Some((CheckScope::Full, Trigger::Poll))
         );
     }
 
@@ -378,8 +410,9 @@ mod tests {
 
     #[test]
     fn disabled_iterations_dont_fire() {
-        assert_eq!(scope_for_poll_tick(false, false), None);
-        assert_eq!(scope_for_poll_tick(true, false), None);
+        assert_eq!(poll_tick(false, false, 0), None);
+        assert_eq!(poll_tick(true, false, 0), None);
+        assert_eq!(poll_tick(true, false, POLL_FULL_EVERY), None);
     }
 
     #[test]
@@ -387,7 +420,12 @@ mod tests {
         // The bug this guards against: a stale "already fired once" flag
         // that never resets on re-enable would give ConfidenceOnly here
         // instead of Full, silently dropping the one-time full recheck a
-        // user re-enabling auto-refresh expects.
-        assert_eq!(scope_for_poll_tick(false, true), Some(CheckScope::Full));
+        // user re-enabling auto-refresh expects. The false -> true
+        // transition wins even if the confidence streak also says it's
+        // time for a periodic Full.
+        assert_eq!(
+            poll_tick(false, true, POLL_FULL_EVERY),
+            Some((CheckScope::Full, Trigger::Initial))
+        );
     }
 }

@@ -538,6 +538,26 @@ fn spawn_core_signal_probes<'scope>(
     }
 }
 
+/// Spawns the captive-portal probe (one plain-HTTP request to
+/// `captive.apple.com`). Shared by `collect_streaming` and
+/// `collect_confidence_streaming`: the portal's verdict can flip with no OS
+/// network-config event — most commonly when the user signs in through the
+/// browser on an unchanged Wi-Fi association — and it feeds
+/// `ConnectionConfidence`'s cap, so a confidence-only recheck has to
+/// re-probe it or a stale "Detected" pins confidence at `Limited`
+/// indefinitely.
+fn spawn_captive_portal_probe<'scope>(
+    scope: &'scope std::thread::Scope<'scope, '_>,
+    tx: &mpsc::Sender<StatusField>,
+) {
+    let tx = tx.clone();
+    scope.spawn(move || {
+        let _ = tx.send(StatusField::CaptivePortal(
+            captive_portal::check_captive_portal(),
+        ));
+    });
+}
+
 /// Runs every probe concurrently and sends each `StatusField` down `tx` the
 /// moment it completes, instead of waiting for the slowest probe before any
 /// result is visible. Send errors (receiver dropped) are ignored — the
@@ -594,24 +614,24 @@ pub fn collect_streaming(tx: mpsc::Sender<StatusField>) {
         scope.spawn(|| {
             let _ = tx.send(StatusField::WifiIdentity(wifi::wifi_identity()));
         });
-        scope.spawn(|| {
-            let _ = tx.send(StatusField::CaptivePortal(
-                captive_portal::check_captive_portal(),
-            ));
-        });
+        spawn_captive_portal_probe(scope, &tx);
     });
 }
 
-/// Runs only the four confidence-determining probes (see
-/// [`spawn_core_signal_probes`]), skipping everything that can't have
-/// changed without an OS network-config event — interfaces, VPN, proxy,
-/// Wi-Fi (notably the slow `system_profiler`-backed identity lookup),
-/// ip-stack, and the captive-portal probe. Intended for a periodic
-/// safety-net recheck (e.g. a blackholed route, which produces no config
-/// event) where re-running the static-config probes would be pure waste.
+/// Runs the four confidence-determining probes (see
+/// [`spawn_core_signal_probes`]) plus the captive-portal check (see
+/// [`spawn_captive_portal_probe`]) — everything `ConnectionConfidence`
+/// depends on, and nothing else. Skips the probes whose result can't change
+/// without an OS network-config event: interfaces, VPN, proxy, Wi-Fi
+/// (notably the slow `system_profiler`-backed identity lookup), ip-stack,
+/// and the dynamic gateway/nameserver reachability lists. Intended for a
+/// periodic safety-net recheck (e.g. a blackholed route, which produces no
+/// config event) where re-running the static-config probes would be pure
+/// waste.
 pub fn collect_confidence_streaming(tx: mpsc::Sender<StatusField>) {
     std::thread::scope(|scope| {
         spawn_core_signal_probes(scope, &tx);
+        spawn_captive_portal_probe(scope, &tx);
     });
 }
 
@@ -902,12 +922,13 @@ mod tests {
     }
 
     /// Mirrors `collect_streaming_sends_every_status_field_and_probe_group`
-    /// for the confidence-only path: it must send only `Ping`/`Connect`/
-    /// `Resolution` items for the four confidence groups plus their
-    /// `GroupComplete` markers, and nothing from the static-config probes
-    /// it's meant to skip.
+    /// for the confidence-only path: it must send the four confidence
+    /// groups' `Ping`/`Connect`/`Resolution` items plus their
+    /// `GroupComplete` markers and exactly one `CaptivePortal` (all of what
+    /// `ConnectionConfidence` needs), and nothing from the static-config
+    /// probes it's meant to skip.
     #[test]
-    fn collect_confidence_streaming_sends_only_the_four_confidence_groups() {
+    fn collect_confidence_streaming_sends_only_what_confidence_needs() {
         let (tx, rx) = mpsc::channel();
         collect_confidence_streaming(tx);
         let received: Vec<StatusField> = rx.into_iter().collect();
@@ -921,7 +942,6 @@ mod tests {
             "WifiIdentity",
             "WifiRadio",
             "IpStack",
-            "CaptivePortal",
         ] {
             assert_eq!(
                 tally(&received).get(label).copied().unwrap_or(0),
@@ -931,12 +951,19 @@ mod tests {
         }
 
         assert_eq!(
+            tally(&received).get("CaptivePortal").copied().unwrap_or(0),
+            1,
+            "confidence-only streaming must re-probe the captive portal (feeds the confidence cap)"
+        );
+
+        assert_eq!(
             received.len(),
             DEFAULT_PING_TARGETS.len()
                 + DEFAULT_PING_TARGETS_V6.len()
                 + DEFAULT_RESOLUTION_TARGETS.len() * 2
-                + 4,
-            "expected one message per target across the four confidence groups, plus 4 GroupComplete: {received:?}"
+                + 4 // GroupComplete markers
+                + 1, // CaptivePortal
+            "expected one message per target across the four confidence groups, plus 4 GroupComplete and 1 CaptivePortal: {received:?}"
         );
 
         assert_confidence_groups_completed(&received);
