@@ -235,8 +235,7 @@ fn spawn_workers(
             run_and_forward(&tx, &generation, this_gen, scope);
         }
     };
-    let trigger = watch::spawn_watch_trigger(auto_refresh, health, watch::Intervals::default(), fire)
-        .expect("failed to start config-change watcher");
+    let trigger = watch::spawn_watch_trigger(auto_refresh, health, watch::Intervals::default(), fire);
 
     (rx, manual_tx, trigger, generation)
 }

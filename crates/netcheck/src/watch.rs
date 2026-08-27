@@ -3,7 +3,6 @@
 //! backed by an adaptive-interval poll as a safety net for failures that
 //! produce no config-change event at all (e.g. a blackholed route).
 
-use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
@@ -49,10 +48,10 @@ pub enum CheckScope {
     ConfidenceOnly,
 }
 
-/// Keeps the config-change watcher and the adaptive-poll thread alive for
-/// as long as this is held — drop only at process exit.
+/// Keeps the config-change watcher (if it started) and the adaptive-poll
+/// thread alive for as long as this is held — drop only at process exit.
 pub struct WatchTrigger {
-    _sc_handle: netstatus::WatchHandle,
+    _sc_handle: Option<netstatus::WatchHandle>,
     _poll_thread: std::thread::JoinHandle<()>,
 }
 
@@ -72,6 +71,11 @@ fn interval_for(intervals: Intervals, health: u8) -> Duration {
 /// enabled (there's no config-change data to fall back on yet) and
 /// `CheckScope::ConfidenceOnly` after that (see `CheckScope`).
 ///
+/// If the config-change watcher fails to start (e.g. `SCDynamicStore` setup
+/// rejected in a sandboxed environment), this doesn't fail outright — it
+/// still returns a `WatchTrigger` running the poll thread alone, so `watch`
+/// degrades to poll-only instead of refusing to run at all.
+///
 /// `health` is written by the caller after each check completes (`HEALTHY`
 /// or `DEGRADED`, from the latest `ConnectionConfidence`) and read here to
 /// pick the poll thread's next sleep duration from `intervals`.
@@ -80,7 +84,7 @@ pub fn spawn_watch_trigger(
     health: Arc<AtomicU8>,
     intervals: Intervals,
     fire: impl Fn(CheckScope) + Send + Sync + 'static,
-) -> io::Result<WatchTrigger> {
+) -> WatchTrigger {
     let fire = Arc::new(fire);
 
     let sc_handle = {
@@ -90,7 +94,11 @@ pub fn spawn_watch_trigger(
             if enabled.load(Ordering::Relaxed) {
                 fire(CheckScope::Full);
             }
-        })?
+        })
+        .inspect_err(|err| {
+            eprintln!("netcheck: config-change watcher unavailable, falling back to poll-only: {err}");
+        })
+        .ok()
     };
 
     let poll_thread = std::thread::spawn(move || {
@@ -111,8 +119,8 @@ pub fn spawn_watch_trigger(
         }
     });
 
-    Ok(WatchTrigger {
+    WatchTrigger {
         _sc_handle: sc_handle,
         _poll_thread: poll_thread,
-    })
+    }
 }

@@ -202,8 +202,7 @@ pub fn run_command(command: Command) {
             let _trigger = watch::spawn_watch_trigger(enabled, health, intervals, {
                 let fire = fire.clone();
                 move |scope| fire(scope)
-            })
-            .expect("failed to start config-change watcher");
+            });
             let mut stdout = std::io::stdout();
             for field in rx {
                 let _ = writeln!(
