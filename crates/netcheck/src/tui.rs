@@ -65,6 +65,18 @@ impl PendingCtx<'_> {
     }
 }
 
+/// A row's leading indicator: the spinner when `pending`, otherwise blank
+/// space of the same width — the row's own reachable/unreachable color and
+/// value stay exactly as last received, not blanked out just because a
+/// fresher result is on the way.
+fn spinner_prefix(pending: bool, ctx: &PendingCtx) -> Span<'static> {
+    if pending {
+        Span::styled(format!("{} ", ctx.spinner()), Style::default().fg(Color::Cyan))
+    } else {
+        Span::raw("  ")
+    }
+}
+
 /// Formats an elapsed duration as "now" under 3s, seconds under a minute,
 /// minutes under an hour, hours above it — "42s" reads fine, "3717s" doesn't.
 fn format_age(elapsed: Duration) -> String {
@@ -183,16 +195,34 @@ fn spawn_workers(
     {
         let tx = tx.clone();
         let generation = generation.clone();
+        // Tracks the most recently *requested* manual generation — distinct
+        // from `generation` itself, which a background poll can also bump.
+        // Only the run matching this value is allowed to clear `refreshing`
+        // when it finishes, so an in-between poll superseding a manual run
+        // doesn't leave `refreshing` stuck (nothing else would clear it),
+        // and an even-newer manual press correctly keeps it set until *its*
+        // own run finishes.
+        let latest_manual_gen = Arc::new(AtomicU64::new(0));
         std::thread::spawn(move || {
             for () in manual_rx {
                 let this_gen = generation.fetch_add(1, Ordering::SeqCst) + 1;
+                latest_manual_gen.store(this_gen, Ordering::SeqCst);
                 refreshing.store(true, Ordering::Relaxed);
-                run_and_forward(&tx, &generation, this_gen, CheckScope::Full);
-                // Always clear, even if this run was itself superseded by a
-                // newer one (e.g. a background poll firing mid-refresh):
-                // either way this manual request is done being handled —
-                // superseded just means something even fresher is coming.
-                refreshing.store(false, Ordering::Relaxed);
+                // Spawned rather than run inline: this loop must stay free
+                // to notice the *next* manual_rx message immediately (and
+                // bump generation/refreshing right away) instead of
+                // blocking until this run's probes — up to ~10s for the
+                // captive-portal timeout — finish.
+                let tx = tx.clone();
+                let generation = generation.clone();
+                let refreshing = refreshing.clone();
+                let latest_manual_gen = latest_manual_gen.clone();
+                std::thread::spawn(move || {
+                    run_and_forward(&tx, &generation, this_gen, CheckScope::Full);
+                    if latest_manual_gen.load(Ordering::SeqCst) == this_gen {
+                        refreshing.store(false, Ordering::Relaxed);
+                    }
+                });
             }
         });
     }
@@ -403,21 +433,13 @@ fn ping_list(
         .iter()
         .map(|p| {
             let pending = ctx.is_pending(&format!("{group}:{}", p.target));
-            let color = if pending {
-                Color::DarkGray
-            } else if p.reachable {
-                Color::Green
-            } else {
-                Color::Red
-            };
-            let rtt = if pending {
-                format!("{} refreshing", ctx.spinner())
-            } else {
-                p.rtt_ms
-                    .map(|ms| format!("{ms:.1} ms"))
-                    .unwrap_or_else(|| "timeout".to_string())
-            };
+            let color = if p.reachable { Color::Green } else { Color::Red };
+            let rtt = p
+                .rtt_ms
+                .map(|ms| format!("{ms:.1} ms"))
+                .unwrap_or_else(|| "timeout".to_string());
             ListItem::new(Line::from(vec![
+                spinner_prefix(pending, ctx),
                 Span::styled(pad_col(&p.target, 20), Style::default().fg(color)),
                 Span::raw(rtt),
             ]))
@@ -436,21 +458,13 @@ fn connect_list(
         .iter()
         .map(|c| {
             let pending = ctx.is_pending(&format!("{group}:{}", c.target));
-            let color = if pending {
-                Color::DarkGray
-            } else if c.reachable {
-                Color::Green
-            } else {
-                Color::Red
-            };
-            let rtt = if pending {
-                format!("{} refreshing", ctx.spinner())
-            } else {
-                c.rtt_ms
-                    .map(|ms| format!("{ms:.1} ms"))
-                    .unwrap_or_else(|| "unreachable".to_string())
-            };
+            let color = if c.reachable { Color::Green } else { Color::Red };
+            let rtt = c
+                .rtt_ms
+                .map(|ms| format!("{ms:.1} ms"))
+                .unwrap_or_else(|| "unreachable".to_string());
             ListItem::new(Line::from(vec![
+                spinner_prefix(pending, ctx),
                 Span::styled(pad_col(&c.target, 20), Style::default().fg(color)),
                 Span::raw(format!(":{}  {}", c.port, rtt)),
             ]))
@@ -467,16 +481,8 @@ fn resolution_list(resolution: &[netstatus::ResolutionResult], ctx: &PendingCtx)
             .iter()
             .map(|r| {
                 let pending = ctx.is_pending(&format!("Resolution:{}", r.domain));
-                let color = if pending {
-                    Color::DarkGray
-                } else if r.resolved {
-                    Color::Green
-                } else {
-                    Color::Red
-                };
-                let detail = if pending {
-                    format!("{} refreshing", ctx.spinner())
-                } else if r.resolved {
+                let color = if r.resolved { Color::Green } else { Color::Red };
+                let detail = if r.resolved {
                     format!(
                         "{}  ({})",
                         r.duration_ms
@@ -488,6 +494,7 @@ fn resolution_list(resolution: &[netstatus::ResolutionResult], ctx: &PendingCtx)
                     "failed".to_string()
                 };
                 ListItem::new(Line::from(vec![
+                    spinner_prefix(pending, ctx),
                     Span::styled(pad_col(&r.domain, 20), Style::default().fg(color)),
                     Span::raw(detail),
                 ]))
