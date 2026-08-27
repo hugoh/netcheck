@@ -1,7 +1,7 @@
 use crate::interfaces::{Interface, is_link_local};
 use serde::Serialize;
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, schemars::JsonSchema)]
 pub enum IpStack {
     Ipv4Only,
     Ipv6Only,

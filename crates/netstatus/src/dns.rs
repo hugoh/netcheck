@@ -5,7 +5,7 @@ use system_configuration::dynamic_store::{SCDynamicStore, SCDynamicStoreBuilder}
 use system_configuration::network_reachability::{ReachabilityFlags, SCNetworkReachability};
 
 /// A single resolver configuration, one per network service.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct Resolver {
     pub domain: Option<String>,
     pub search_domains: Vec<String>,

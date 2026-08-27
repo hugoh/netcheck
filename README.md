@@ -121,13 +121,54 @@ netcheck connection                          # connection confidence as JSON
 netcheck ping 1.1.1.1 8.8.8.8
 netcheck resolve google.com github.com
 netcheck connect amazon.com microsoft.com --port 443
+netcheck stream                              # one snapshot as NDJSON, field by field
+netcheck watch                               # like stream, but keeps running — see below
+netcheck schema                              # JSON Schema for stream/watch's NDJSON output
 
 # dashboard keys: q quit, r refresh, a toggle auto-refresh, 1-4 switch tabs
 ```
 
-The native app and the dashboard both auto-refresh every 5 seconds (off by
-default — toggle with `a` in the dashboard); subcommands run on demand and
-are meant for scripting/piping into `jq`.
+The native app and the dashboard both auto-refresh (on by default — toggle
+with `a` in the dashboard): a re-check fires immediately on any OS
+network-config change (interface up/down, IP/DNS reconfig, VPN connect),
+backed by an adaptive-interval poll (60s while healthy, 10s once a check
+comes back degraded) as a safety net for failures that produce no config
+event at all, like a blackholed route. `netcheck watch --interval
+<secs> --degraded-interval <secs>` exposes the same behavior on the
+command line. Other subcommands run on demand and are meant for
+scripting/piping into `jq`.
+
+## Wire format
+
+`netcheck stream` and `netcheck watch` print NDJSON (one JSON object per
+line) instead of a single blocking snapshot — each line is one `StatusField`
+result as soon as that probe completes. `status`/`ping`/`resolve`/etc.
+still print one complete JSON object.
+
+Two things worth knowing about the shape:
+
+- **Externally tagged.** Each line is `{"VariantName": <data>}` — e.g.
+  `{"SplitDns":false}` or `{"IpStack":"Ipv4Only"}`.
+- **Target-list probes stream per-target, not per-list.** `Ping`, `Connect`,
+  and `Resolution` (reachability pings, TCP connects, DNS resolution) send
+  one message per target as soon as *that* target responds, instead of
+  waiting for the slowest target in the group — so one unreachable host
+  doesn't hold up the rest of the list from showing up:
+  ```json
+  {"Ping":{"group":"Reachability","result":{"target":"1.1.1.1","reachable":true,"rtt_ms":12.3}}}
+  {"Ping":{"group":"Reachability","result":{"target":"8.8.8.8","reachable":true,"rtt_ms":9.1}}}
+  {"GroupComplete":"Reachability"}
+  ```
+  `GroupComplete` marks a target list as fully drained; it's only sent for
+  the four groups (`Resolution`, `Reachability`, `ReachabilityV6`,
+  `DomainReachability`) that determine connection confidence, since that's
+  the only place completeness (not just partial data) actually matters.
+
+The full shape is defined as [JSON Schema](schema/status-field.schema.json),
+generated straight from the Rust `StatusField` type via
+[`schemars`](https://docs.rs/schemars) — run `netcheck schema` to print the
+current version; it can't drift from the real wire format the way
+hand-written docs could.
 
 Each status collection — every CLI `status`/`stream` call, and every
 dashboard auto-refresh — includes a plain HTTP (not HTTPS) request to

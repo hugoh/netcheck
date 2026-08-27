@@ -34,7 +34,7 @@ pub use sc_watch::{WatchHandle, watch_config_changes};
 pub use status::{
     ConnectionConfidence, DEFAULT_PING_TARGETS, DEFAULT_PING_TARGETS_V6, NetworkStatus,
     PartialStatus, StatusField, collect, collect_confidence_streaming, collect_streaming,
-    confidence_only,
+    confidence_only, status_field_schema,
 };
 pub use vpn::{VpnStatus, vpn_status};
 pub use wifi::{WifiIdentity, WifiRadio, WifiStatus, wifi_identity, wifi_radio, wifi_status};

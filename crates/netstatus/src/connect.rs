@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Result of a single TCP connect probe against a target host and port.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct ConnectResult {
     pub target: String,
     pub port: u16,

@@ -4,7 +4,7 @@ use std::net::IpAddr;
 use std::time::Duration;
 
 /// Result of a single ping probe against a target host.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct PingResult {
     pub target: String,
     pub reachable: bool,

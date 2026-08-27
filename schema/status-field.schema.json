@@ -1,0 +1,537 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StatusField",
+  "description": "One probe's result, delivered as soon as that probe completes. For a\ntarget-list probe (`Ping`/`Connect`/`Resolution`), that's per-target, not\nper-group — a slow or unreachable target no longer holds up the rest of\nits list from being visible (see `for_each_concurrent`). `GroupComplete`\nmarks a target list as fully drained; only sent for the four groups\n`PartialStatus::confidence` needs a completeness signal for.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "Interfaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Interface"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "Interfaces"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "Vpn": {
+          "$ref": "#/$defs/VpnStatus"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "Vpn"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "Resolvers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Resolver"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "Resolvers"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "SplitDns": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "SplitDns"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "Ping": {
+          "type": "object",
+          "properties": {
+            "group": {
+              "$ref": "#/$defs/ProbeGroup"
+            },
+            "result": {
+              "$ref": "#/$defs/PingResult"
+            }
+          },
+          "required": [
+            "group",
+            "result"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "Ping"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "Connect": {
+          "type": "object",
+          "properties": {
+            "group": {
+              "$ref": "#/$defs/ProbeGroup"
+            },
+            "result": {
+              "$ref": "#/$defs/ConnectResult"
+            }
+          },
+          "required": [
+            "group",
+            "result"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "Connect"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "Resolution": {
+          "$ref": "#/$defs/ResolutionResult"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "Resolution"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "GroupComplete": {
+          "$ref": "#/$defs/ProbeGroup"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "GroupComplete"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "Proxy": {
+          "$ref": "#/$defs/ProxyConfig"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "Proxy"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "WifiIdentity": {
+          "$ref": "#/$defs/WifiIdentity"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "WifiIdentity"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "WifiRadio": {
+          "$ref": "#/$defs/WifiRadio"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "WifiRadio"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "IpStack": {
+          "$ref": "#/$defs/IpStack"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "IpStack"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "CaptivePortal": {
+          "$ref": "#/$defs/CaptivePortalStatus"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "CaptivePortal"
+      ]
+    }
+  ],
+  "$defs": {
+    "CaptivePortalStatus": {
+      "description": "Whether something between this machine and the internet is\nintercepting plain HTTP traffic to serve a login page (a captive\nportal), determined by fetching Apple's own hotspot-detect endpoint —\nthe same check macOS itself uses.",
+      "type": "string",
+      "enum": [
+        "Clear",
+        "Detected",
+        "Unknown"
+      ]
+    },
+    "ConnectResult": {
+      "description": "Result of a single TCP connect probe against a target host and port.",
+      "type": "object",
+      "properties": {
+        "port": {
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "reachable": {
+          "type": "boolean"
+        },
+        "rtt_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "port",
+        "reachable"
+      ]
+    },
+    "Interface": {
+      "description": "Observable status of a single network interface.",
+      "type": "object",
+      "properties": {
+        "addresses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "loopback": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "up": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "up",
+        "loopback",
+        "addresses"
+      ]
+    },
+    "IpStack": {
+      "type": "string",
+      "enum": [
+        "Ipv4Only",
+        "Ipv6Only",
+        "DualStack",
+        "None"
+      ]
+    },
+    "PingResult": {
+      "description": "Result of a single ping probe against a target host.",
+      "type": "object",
+      "properties": {
+        "reachable": {
+          "type": "boolean"
+        },
+        "rtt_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "reachable"
+      ]
+    },
+    "ProbeGroup": {
+      "description": "Which target list a streamed `Ping`/`Connect` item, or a `GroupComplete`\nmarker, belongs to.",
+      "type": "string",
+      "enum": [
+        "Reachability",
+        "ReachabilityV6",
+        "GatewayReachability",
+        "NameserverReachability",
+        "DomainReachability",
+        "NameserverConnect",
+        "Resolution"
+      ]
+    },
+    "ProxyConfig": {
+      "type": "object",
+      "properties": {
+        "exceptions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "http": {
+          "$ref": "#/$defs/ProxyEndpoint"
+        },
+        "https": {
+          "$ref": "#/$defs/ProxyEndpoint"
+        },
+        "pac_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "socks": {
+          "$ref": "#/$defs/ProxyEndpoint"
+        }
+      },
+      "required": [
+        "http",
+        "https",
+        "socks",
+        "exceptions"
+      ]
+    },
+    "ProxyEndpoint": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "host": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "port": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "enabled"
+      ]
+    },
+    "ResolutionResult": {
+      "description": "Result of resolving a single domain name.",
+      "type": "object",
+      "properties": {
+        "addresses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "domain": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "resolved": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "domain",
+        "resolved",
+        "addresses"
+      ]
+    },
+    "Resolver": {
+      "description": "A single resolver configuration, one per network service.",
+      "type": "object",
+      "properties": {
+        "domain": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "if_index": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "if_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nameservers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reachable": {
+          "type": "boolean"
+        },
+        "scoped": {
+          "type": "boolean"
+        },
+        "search_domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "search_domains",
+        "nameservers",
+        "scoped",
+        "reachable"
+      ]
+    },
+    "VpnStatus": {
+      "description": "VPN / tunnel status derived from the interface list and the primary\n(default-route) interface.",
+      "type": "object",
+      "properties": {
+        "connected": {
+          "type": "boolean"
+        },
+        "primary_interface": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "routed_subnets": {
+          "description": "Subnets routed through the VPN (its own assigned address/subnet,\nplus any additional split-tunnel destinations it pushes), formatted\nas CIDR strings. Empty when not connected, or when the dynamic\nstore's per-service IPv4 dict for the tunnel interface carries no\n`AdditionalRoutes` — a full-tunnel VPN commonly has none, since it\nbecomes the default route (`OverridePrimary`) instead of pushing a\ndiscrete route list.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "split_tunnel": {
+          "type": "boolean"
+        },
+        "tunnels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "tunnels",
+        "connected",
+        "split_tunnel",
+        "routed_subnets"
+      ]
+    },
+    "WifiIdentity": {
+      "description": "SSID/connected-state, the slow half of Wi-Fi status — only obtainable via\n`system_profiler` (a ~1s shell-out), since reading it through CoreWLAN\nneeds Location Services authorization a bare CLI/TUI binary can't get.",
+      "type": "object",
+      "properties": {
+        "connected": {
+          "type": "boolean"
+        },
+        "ssid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "connected"
+      ]
+    },
+    "WifiRadio": {
+      "description": "Channel/signal/noise/security/PHY-mode, the fast half of Wi-Fi status —\nread straight from CoreWLAN (`CWWiFiClient`/`CWInterface`), no shell-out.",
+      "type": "object",
+      "properties": {
+        "channel": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "noise_dbm": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "phy_mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "security": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "signal_dbm": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        }
+      }
+    }
+  }
+}

@@ -4,7 +4,7 @@ use netdev::ipnet;
 use serde::Serialize;
 
 /// Observable status of a single network interface.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct Interface {
     pub name: String,
     pub up: bool,

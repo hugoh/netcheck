@@ -5,7 +5,7 @@ use system_configuration::dynamic_store::{SCDynamicStore, SCDynamicStoreBuilder}
 
 /// VPN / tunnel status derived from the interface list and the primary
 /// (default-route) interface.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct VpnStatus {
     pub tunnels: Vec<String>,
     pub primary_interface: Option<String>,

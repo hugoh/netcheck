@@ -5,14 +5,14 @@ use core_foundation::string::CFString;
 use serde::Serialize;
 use system_configuration::dynamic_store::SCDynamicStoreBuilder;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Default, schemars::JsonSchema)]
 pub struct ProxyEndpoint {
     pub enabled: bool,
     pub host: Option<String>,
     pub port: Option<u16>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Default, schemars::JsonSchema)]
 pub struct ProxyConfig {
     pub http: ProxyEndpoint,
     pub https: ProxyEndpoint,

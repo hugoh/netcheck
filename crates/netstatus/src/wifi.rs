@@ -3,7 +3,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::process::Command;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Default, schemars::JsonSchema)]
 pub struct WifiStatus {
     pub connected: bool,
     pub ssid: Option<String>,
@@ -17,7 +17,7 @@ pub struct WifiStatus {
 /// SSID/connected-state, the slow half of Wi-Fi status — only obtainable via
 /// `system_profiler` (a ~1s shell-out), since reading it through CoreWLAN
 /// needs Location Services authorization a bare CLI/TUI binary can't get.
-#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Default, schemars::JsonSchema)]
 pub struct WifiIdentity {
     pub connected: bool,
     pub ssid: Option<String>,
@@ -25,7 +25,7 @@ pub struct WifiIdentity {
 
 /// Channel/signal/noise/security/PHY-mode, the fast half of Wi-Fi status —
 /// read straight from CoreWLAN (`CWWiFiClient`/`CWInterface`), no shell-out.
-#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Default, schemars::JsonSchema)]
 pub struct WifiRadio {
     pub channel: Option<String>,
     pub signal_dbm: Option<i32>,

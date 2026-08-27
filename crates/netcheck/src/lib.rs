@@ -43,6 +43,8 @@ pub enum Command {
         #[arg(long, default_value_t = watch::Intervals::default().degraded.as_secs())]
         degraded_interval: u64,
     },
+    /// Print the JSON Schema for `stream`/`watch`'s NDJSON wire format
+    Schema,
     /// Print network interfaces as JSON
     Interfaces,
     /// Print DNS resolver configuration as JSON
@@ -87,6 +89,7 @@ fn print_json<T: serde::Serialize>(value: &T) {
 pub fn run_command(command: Command) {
     match command {
         Command::Status => print_json(&netstatus::collect()),
+        Command::Schema => print_json(&netstatus::status_field_schema()),
         Command::Stream => {
             use std::io::Write;
             let (tx, rx) = std::sync::mpsc::channel();

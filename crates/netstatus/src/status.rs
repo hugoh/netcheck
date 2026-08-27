@@ -242,7 +242,7 @@ pub fn collect() -> NetworkStatus {
 
 /// Which target list a streamed `Ping`/`Connect` item, or a `GroupComplete`
 /// marker, belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, schemars::JsonSchema)]
 pub enum ProbeGroup {
     Reachability,
     ReachabilityV6,
@@ -259,7 +259,7 @@ pub enum ProbeGroup {
 /// its list from being visible (see `for_each_concurrent`). `GroupComplete`
 /// marks a target list as fully drained; only sent for the four groups
 /// `PartialStatus::confidence` needs a completeness signal for.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub enum StatusField {
     Interfaces(Vec<Interface>),
     Vpn(VpnStatus),
@@ -280,6 +280,15 @@ pub enum StatusField {
     WifiRadio(WifiRadio),
     IpStack(IpStack),
     CaptivePortal(CaptivePortalStatus),
+}
+
+/// JSON Schema for `StatusField` — the wire format streamed by the `stream`
+/// and `watch` CLI subcommands (one object per NDJSON line). Generated
+/// directly from the enum via `schemars` rather than hand-written, so it
+/// can't silently drift from the actual Rust type the way independently
+/// maintained docs (or the Swift decode types) can.
+pub fn status_field_schema() -> schemars::Schema {
+    schemars::schema_for!(StatusField)
 }
 
 /// Spawns the four probes that determine `ConnectionConfidence` — DNS

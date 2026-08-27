@@ -16,7 +16,7 @@ pub const DEFAULT_RESOLUTION_TARGETS: &[&str] = &[
 ];
 
 /// Result of resolving a single domain name.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct ResolutionResult {
     pub domain: String,
     pub resolved: bool,

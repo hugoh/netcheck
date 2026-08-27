@@ -10,7 +10,7 @@ const EXPECTED_BODY_MARKER: &str = "Success";
 /// intercepting plain HTTP traffic to serve a login page (a captive
 /// portal), determined by fetching Apple's own hotspot-detect endpoint —
 /// the same check macOS itself uses.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, schemars::JsonSchema)]
 pub enum CaptivePortalStatus {
     Clear,
     Detected,
