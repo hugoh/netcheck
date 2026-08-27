@@ -168,7 +168,9 @@ The full shape is defined as [JSON Schema](schema/status-field.schema.json),
 generated straight from the Rust `StatusField` type via
 [`schemars`](https://docs.rs/schemars) — run `netcheck schema` to print the
 current version; it can't drift from the real wire format the way
-hand-written docs could.
+hand-written docs could. Browse it rendered (via
+[json-schema-for-humans](https://github.com/coveooss/json-schema-for-humans))
+at [netcheck.larve.net/schema](https://netcheck.larve.net/schema/).
 
 Each status collection — every CLI `status`/`stream` call, and every
 dashboard auto-refresh — includes a plain HTTP (not HTTPS) request to

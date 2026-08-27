@@ -3,9 +3,18 @@ use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, schemars::JsonSchema)]
 pub enum IpStack {
+    /// A routable IPv4 address, but no routable IPv6 address.
+    #[schemars(title = "Ipv4Only")]
     Ipv4Only,
+    /// A routable IPv6 address, but no routable IPv4 address.
+    #[schemars(title = "Ipv6Only")]
     Ipv6Only,
+    /// A routable address in both families.
+    #[schemars(title = "DualStack")]
     DualStack,
+    /// No routable address in either family (link-local only, or no
+    /// address at all).
+    #[schemars(title = "None")]
     None,
 }
 

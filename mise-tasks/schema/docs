@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+#MISE description="Render schema/status-field.schema.json to browsable HTML docs in site/schema/"
+set -euo pipefail
+
+# Uses json-schema-for-humans (https://github.com/coveooss/json-schema-for-humans),
+# the standard tool for this — no hand-written schema viewer to keep in sync.
+# `template_name=js_offline` bundles its CSS/JS/font assets locally instead
+# of pulling jQuery/Bootstrap/Font Awesome from CDNs, so the output works
+# offline and isn't at the mercy of those CDNs' uptime.
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+OUT_DIR="$ROOT_DIR/site/schema"
+
+rm -rf "$OUT_DIR"
+mkdir -p "$OUT_DIR"
+
+uvx --from json-schema-for-humans generate-schema-doc \
+	--config template_name=js_offline \
+	--expand-buttons \
+	"$ROOT_DIR/schema/status-field.schema.json" \
+	"$OUT_DIR/index.html"
+
+# README links to schema/status-field.schema.json (works as-is on GitHub,
+# relative to the repo root) — copy it alongside the rendered docs so the
+# same relative link also resolves on the deployed site.
+cp "$ROOT_DIR/schema/status-field.schema.json" "$OUT_DIR/status-field.schema.json"
+
+echo "Done: site/schema/index.html"

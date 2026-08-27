@@ -12,8 +12,18 @@ const EXPECTED_BODY_MARKER: &str = "Success";
 /// the same check macOS itself uses.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, schemars::JsonSchema)]
 pub enum CaptivePortalStatus {
+    /// The hotspot-detect request got the expected response — nothing is
+    /// intercepting traffic.
+    #[schemars(title = "Clear")]
     Clear,
+    /// The response was rewritten, redirected, or otherwise not what was
+    /// expected — something between this machine and the internet is
+    /// intercepting the request.
+    #[schemars(title = "Detected")]
     Detected,
+    /// The probe didn't get a conclusive answer (e.g. the request itself
+    /// failed) — not evidence of a portal, just an inconclusive check.
+    #[schemars(title = "Unknown")]
     Unknown,
 }
 

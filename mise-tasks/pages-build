@@ -14,3 +14,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mkdir -p "$ROOT_DIR/site/screenshots"
 cp "$ROOT_DIR/assets/screenshots/"*.png "$ROOT_DIR/site/screenshots/"
 cp "$ROOT_DIR/assets/icon-1024.png" "$ROOT_DIR/site/favicon.png"
+
+# site/schema/ (the browsable StatusField wire-format docs, linked from
+# README) is generated fresh here rather than committed, same as the rest of
+# site/ above.
+"$ROOT_DIR/mise-tasks/schema/docs"

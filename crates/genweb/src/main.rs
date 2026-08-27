@@ -8,7 +8,7 @@ const README_PATH: &str = "README.md";
 const SITE_DIR: &str = "site";
 const SITE_NAME: &str = "netcheck";
 const REPO_URL: &str = "https://github.com/hugoh/netcheck";
-const SITE_URL: &str = "https://hugoh.github.io/netcheck/";
+const SITE_URL: &str = "https://netcheck.larve.net/";
 
 fn main() -> ExitCode {
     if let Err(err) = run() {

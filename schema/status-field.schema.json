@@ -4,6 +4,8 @@
   "description": "One probe's result, delivered as soon as that probe completes. For a\ntarget-list probe (`Ping`/`Connect`/`Resolution`), that's per-target, not\nper-group — a slow or unreachable target no longer holds up the rest of\nits list from being visible (see `for_each_concurrent`). `GroupComplete`\nmarks a target list as fully drained; only sent for the four groups\n`PartialStatus::confidence` needs a completeness signal for.",
   "oneOf": [
     {
+      "title": "Interfaces",
+      "description": "The current network interfaces.",
       "type": "object",
       "properties": {
         "Interfaces": {
@@ -19,6 +21,8 @@
       ]
     },
     {
+      "title": "Vpn",
+      "description": "VPN/tunnel status derived from the interface list and the primary\n(default-route) interface.",
       "type": "object",
       "properties": {
         "Vpn": {
@@ -31,6 +35,8 @@
       ]
     },
     {
+      "title": "Resolvers",
+      "description": "Every DNS resolver macOS knows about, including scoped\n(per-interface) resolvers.",
       "type": "object",
       "properties": {
         "Resolvers": {
@@ -46,6 +52,8 @@
       ]
     },
     {
+      "title": "SplitDns",
+      "description": "Whether any resolver is scoped to a specific interface — the\nmechanism VPN clients like Cisco AnyConnect use for split-DNS.",
       "type": "object",
       "properties": {
         "SplitDns": {
@@ -58,6 +66,8 @@
       ]
     },
     {
+      "title": "Ping",
+      "description": "One target's ICMP ping result, for the given `group`.",
       "type": "object",
       "properties": {
         "Ping": {
@@ -82,6 +92,8 @@
       ]
     },
     {
+      "title": "Connect",
+      "description": "One target's TCP connect result, for the given `group`.",
       "type": "object",
       "properties": {
         "Connect": {
@@ -106,6 +118,8 @@
       ]
     },
     {
+      "title": "Resolution",
+      "description": "One domain's DNS resolution result (always `ProbeGroup::Resolution`\n— the only resolution group — so unlike `Ping`/`Connect` this isn't\ntagged with one).",
       "type": "object",
       "properties": {
         "Resolution": {
@@ -118,6 +132,8 @@
       ]
     },
     {
+      "title": "GroupComplete",
+      "description": "`group`'s target list has fully drained — every target in it has\nsent its `Ping`/`Connect`/`Resolution` result at least once.",
       "type": "object",
       "properties": {
         "GroupComplete": {
@@ -130,6 +146,8 @@
       ]
     },
     {
+      "title": "Proxy",
+      "description": "The system's configured HTTP/HTTPS/SOCKS/PAC proxy settings.",
       "type": "object",
       "properties": {
         "Proxy": {
@@ -142,6 +160,8 @@
       ]
     },
     {
+      "title": "WifiIdentity",
+      "description": "SSID/connected-state — the slow half of Wi-Fi status\n(`system_profiler`-backed).",
       "type": "object",
       "properties": {
         "WifiIdentity": {
@@ -154,6 +174,8 @@
       ]
     },
     {
+      "title": "WifiRadio",
+      "description": "Channel/signal/noise/security/PHY-mode — the fast half of Wi-Fi\nstatus (CoreWLAN-backed, no shell-out).",
       "type": "object",
       "properties": {
         "WifiRadio": {
@@ -166,6 +188,8 @@
       ]
     },
     {
+      "title": "IpStack",
+      "description": "Whether the machine has a routable IPv4 address, IPv6 address,\nboth, or neither.",
       "type": "object",
       "properties": {
         "IpStack": {
@@ -178,6 +202,8 @@
       ]
     },
     {
+      "title": "CaptivePortal",
+      "description": "Whether a captive portal was detected.",
       "type": "object",
       "properties": {
         "CaptivePortal": {
@@ -193,11 +219,25 @@
   "$defs": {
     "CaptivePortalStatus": {
       "description": "Whether something between this machine and the internet is\nintercepting plain HTTP traffic to serve a login page (a captive\nportal), determined by fetching Apple's own hotspot-detect endpoint —\nthe same check macOS itself uses.",
-      "type": "string",
-      "enum": [
-        "Clear",
-        "Detected",
-        "Unknown"
+      "oneOf": [
+        {
+          "title": "Clear",
+          "description": "The hotspot-detect request got the expected response — nothing is\nintercepting traffic.",
+          "type": "string",
+          "const": "Clear"
+        },
+        {
+          "title": "Detected",
+          "description": "The response was rewritten, redirected, or otherwise not what was\nexpected — something between this machine and the internet is\nintercepting the request.",
+          "type": "string",
+          "const": "Detected"
+        },
+        {
+          "title": "Unknown",
+          "description": "The probe didn't get a conclusive answer (e.g. the request itself\nfailed) — not evidence of a portal, just an inconclusive check.",
+          "type": "string",
+          "const": "Unknown"
+        }
       ]
     },
     "ConnectResult": {
@@ -258,12 +298,31 @@
       ]
     },
     "IpStack": {
-      "type": "string",
-      "enum": [
-        "Ipv4Only",
-        "Ipv6Only",
-        "DualStack",
-        "None"
+      "oneOf": [
+        {
+          "title": "Ipv4Only",
+          "description": "A routable IPv4 address, but no routable IPv6 address.",
+          "type": "string",
+          "const": "Ipv4Only"
+        },
+        {
+          "title": "Ipv6Only",
+          "description": "A routable IPv6 address, but no routable IPv4 address.",
+          "type": "string",
+          "const": "Ipv6Only"
+        },
+        {
+          "title": "DualStack",
+          "description": "A routable address in both families.",
+          "type": "string",
+          "const": "DualStack"
+        },
+        {
+          "title": "None",
+          "description": "No routable address in either family (link-local only, or no\naddress at all).",
+          "type": "string",
+          "const": "None"
+        }
       ]
     },
     "PingResult": {
@@ -291,15 +350,49 @@
     },
     "ProbeGroup": {
       "description": "Which target list a streamed `Ping`/`Connect` item, or a `GroupComplete`\nmarker, belongs to.",
-      "type": "string",
-      "enum": [
-        "Reachability",
-        "ReachabilityV6",
-        "GatewayReachability",
-        "NameserverReachability",
-        "DomainReachability",
-        "NameserverConnect",
-        "Resolution"
+      "oneOf": [
+        {
+          "title": "Reachability",
+          "description": "ICMP reachability of well-known public IPv4 anycast DNS resolvers\n(see `DEFAULT_PING_TARGETS`).",
+          "type": "string",
+          "const": "Reachability"
+        },
+        {
+          "title": "ReachabilityV6",
+          "description": "Same as `Reachability`, but IPv6 targets (see\n`DEFAULT_PING_TARGETS_V6`).",
+          "type": "string",
+          "const": "ReachabilityV6"
+        },
+        {
+          "title": "GatewayReachability",
+          "description": "ICMP reachability of the default gateway's IP(s) — a LAN-hop\nsignal, distinct from `Reachability`'s public anycast targets:\nunreachable here alongside unreachable public targets points at the\nlocal link rather than the ISP or upstream.",
+          "type": "string",
+          "const": "GatewayReachability"
+        },
+        {
+          "title": "NameserverReachability",
+          "description": "ICMP reachability of each configured resolver's IP, probed directly\nrather than inferred from whether name resolution succeeds.",
+          "type": "string",
+          "const": "NameserverReachability"
+        },
+        {
+          "title": "DomainReachability",
+          "description": "TCP connect (port 443) reachability of well-known domains (see\n`DEFAULT_RESOLUTION_TARGETS`) — a real connect rather than ICMP\nping, since some large operators filter ICMP at their edge\nregardless of whether the service itself is up.",
+          "type": "string",
+          "const": "DomainReachability"
+        },
+        {
+          "title": "NameserverConnect",
+          "description": "TCP connect (port 53) reachability of each configured resolver's\nIP. Like `DomainReachability`, this catches resolvers that filter\nICMP but still serve queries.",
+          "type": "string",
+          "const": "NameserverConnect"
+        },
+        {
+          "title": "Resolution",
+          "description": "DNS resolution of well-known domains (see\n`DEFAULT_RESOLUTION_TARGETS`).",
+          "type": "string",
+          "const": "Resolution"
+        }
       ]
     },
     "ProxyConfig": {

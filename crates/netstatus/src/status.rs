@@ -244,12 +244,38 @@ pub fn collect() -> NetworkStatus {
 /// marker, belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, schemars::JsonSchema)]
 pub enum ProbeGroup {
+    /// ICMP reachability of well-known public IPv4 anycast DNS resolvers
+    /// (see `DEFAULT_PING_TARGETS`).
+    #[schemars(title = "Reachability")]
     Reachability,
+    /// Same as `Reachability`, but IPv6 targets (see
+    /// `DEFAULT_PING_TARGETS_V6`).
+    #[schemars(title = "ReachabilityV6")]
     ReachabilityV6,
+    /// ICMP reachability of the default gateway's IP(s) — a LAN-hop
+    /// signal, distinct from `Reachability`'s public anycast targets:
+    /// unreachable here alongside unreachable public targets points at the
+    /// local link rather than the ISP or upstream.
+    #[schemars(title = "GatewayReachability")]
     GatewayReachability,
+    /// ICMP reachability of each configured resolver's IP, probed directly
+    /// rather than inferred from whether name resolution succeeds.
+    #[schemars(title = "NameserverReachability")]
     NameserverReachability,
+    /// TCP connect (port 443) reachability of well-known domains (see
+    /// `DEFAULT_RESOLUTION_TARGETS`) — a real connect rather than ICMP
+    /// ping, since some large operators filter ICMP at their edge
+    /// regardless of whether the service itself is up.
+    #[schemars(title = "DomainReachability")]
     DomainReachability,
+    /// TCP connect (port 53) reachability of each configured resolver's
+    /// IP. Like `DomainReachability`, this catches resolvers that filter
+    /// ICMP but still serve queries.
+    #[schemars(title = "NameserverConnect")]
     NameserverConnect,
+    /// DNS resolution of well-known domains (see
+    /// `DEFAULT_RESOLUTION_TARGETS`).
+    #[schemars(title = "Resolution")]
     Resolution,
 }
 
@@ -261,24 +287,59 @@ pub enum ProbeGroup {
 /// `PartialStatus::confidence` needs a completeness signal for.
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub enum StatusField {
+    /// The current network interfaces.
+    #[schemars(title = "Interfaces")]
     Interfaces(Vec<Interface>),
+    /// VPN/tunnel status derived from the interface list and the primary
+    /// (default-route) interface.
+    #[schemars(title = "Vpn")]
     Vpn(VpnStatus),
+    /// Every DNS resolver macOS knows about, including scoped
+    /// (per-interface) resolvers.
+    #[schemars(title = "Resolvers")]
     Resolvers(Vec<Resolver>),
+    /// Whether any resolver is scoped to a specific interface — the
+    /// mechanism VPN clients like Cisco AnyConnect use for split-DNS.
+    #[schemars(title = "SplitDns")]
     SplitDns(bool),
+    /// One target's ICMP ping result, for the given `group`.
+    #[schemars(title = "Ping")]
     Ping {
         group: ProbeGroup,
         result: PingResult,
     },
+    /// One target's TCP connect result, for the given `group`.
+    #[schemars(title = "Connect")]
     Connect {
         group: ProbeGroup,
         result: ConnectResult,
     },
+    /// One domain's DNS resolution result (always `ProbeGroup::Resolution`
+    /// — the only resolution group — so unlike `Ping`/`Connect` this isn't
+    /// tagged with one).
+    #[schemars(title = "Resolution")]
     Resolution(ResolutionResult),
+    /// `group`'s target list has fully drained — every target in it has
+    /// sent its `Ping`/`Connect`/`Resolution` result at least once.
+    #[schemars(title = "GroupComplete")]
     GroupComplete(ProbeGroup),
+    /// The system's configured HTTP/HTTPS/SOCKS/PAC proxy settings.
+    #[schemars(title = "Proxy")]
     Proxy(ProxyConfig),
+    /// SSID/connected-state — the slow half of Wi-Fi status
+    /// (`system_profiler`-backed).
+    #[schemars(title = "WifiIdentity")]
     WifiIdentity(WifiIdentity),
+    /// Channel/signal/noise/security/PHY-mode — the fast half of Wi-Fi
+    /// status (CoreWLAN-backed, no shell-out).
+    #[schemars(title = "WifiRadio")]
     WifiRadio(WifiRadio),
+    /// Whether the machine has a routable IPv4 address, IPv6 address,
+    /// both, or neither.
+    #[schemars(title = "IpStack")]
     IpStack(IpStack),
+    /// Whether a captive portal was detected.
+    #[schemars(title = "CaptivePortal")]
     CaptivePortal(CaptivePortalStatus),
 }
 
