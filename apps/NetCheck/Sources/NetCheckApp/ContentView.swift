@@ -130,8 +130,11 @@ struct ContentView: View {
             }
 
             if fetcher.isRefreshing {
-                Label("Refreshing", systemImage: "arrow.triangle.2.circlepath")
-                    .foregroundStyle(.cyan)
+                HStack(spacing: 4) {
+                    ProgressView().controlSize(.small)
+                    Text("Refreshing")
+                }
+                .foregroundStyle(.cyan)
             }
 
             Text(Self.appVersion)
