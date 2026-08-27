@@ -145,19 +145,9 @@ pub fn run_command(command: Command) {
                 let partial = partial.clone();
                 move |scope: watch::CheckScope| {
                     let this_gen = generation.fetch_add(1, Ordering::SeqCst) + 1;
-                    let (inner_tx, inner_rx) = std::sync::mpsc::channel();
-                    std::thread::spawn(move || match scope {
-                        watch::CheckScope::Full => netstatus::collect_streaming(inner_tx),
-                        watch::CheckScope::ConfidenceOnly => {
-                            netstatus::collect_confidence_streaming(inner_tx)
-                        }
-                    });
-                    for field in inner_rx {
+                    watch::run_and_forward(&tx, &generation, this_gen, scope, |field| {
                         partial.lock().unwrap().merge(field.clone());
-                        if generation.load(Ordering::SeqCst) == this_gen {
-                            let _ = tx.send(field);
-                        }
-                    }
+                    });
                     let degraded = partial.lock().unwrap().confidence()
                         == Some(netstatus::ConnectionConfidence::Offline);
                     health.store(

@@ -144,29 +144,6 @@ fn tabs_line(active: Tab) -> Line<'static> {
     Line::from(spans)
 }
 
-/// Runs one collection pass — full or confidence-only per `scope` (see
-/// `watch::CheckScope`) — and forwards each field to `tx`, but only as long
-/// as `generation` still matches `this_gen` — if a newer run (manual or
-/// auto) has started in the meantime, this run's remaining fields are
-/// dropped instead of overwriting fresher data.
-fn run_and_forward(
-    tx: &mpsc::Sender<StatusField>,
-    generation: &Arc<AtomicU64>,
-    this_gen: u64,
-    scope: CheckScope,
-) {
-    let (inner_tx, inner_rx) = mpsc::channel();
-    std::thread::spawn(move || match scope {
-        CheckScope::Full => netstatus::collect_streaming(inner_tx),
-        CheckScope::ConfidenceOnly => netstatus::collect_confidence_streaming(inner_tx),
-    });
-    for field in inner_rx {
-        if generation.load(Ordering::SeqCst) == this_gen {
-            let _ = tx.send(field);
-        }
-    }
-}
-
 /// Spawns the background workers. Returns a receiver fed by manual refreshes
 /// triggered via the returned sender, and the smart-watch trigger
 /// (config-change notifications plus an adaptive-interval poll, both gated
@@ -218,7 +195,7 @@ fn spawn_workers(
                 let refreshing = refreshing.clone();
                 let latest_manual_gen = latest_manual_gen.clone();
                 std::thread::spawn(move || {
-                    run_and_forward(&tx, &generation, this_gen, CheckScope::Full);
+                    watch::run_and_forward(&tx, &generation, this_gen, CheckScope::Full, |_| {});
                     if latest_manual_gen.load(Ordering::SeqCst) == this_gen {
                         refreshing.store(false, Ordering::Relaxed);
                     }
@@ -232,7 +209,7 @@ fn spawn_workers(
         let generation = generation.clone();
         move |scope: CheckScope| {
             let this_gen = generation.fetch_add(1, Ordering::SeqCst) + 1;
-            run_and_forward(&tx, &generation, this_gen, scope);
+            watch::run_and_forward(&tx, &generation, this_gen, scope, |_| {});
         }
     };
     let trigger = watch::spawn_watch_trigger(auto_refresh, health, watch::Intervals::default(), fire);

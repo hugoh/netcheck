@@ -3,8 +3,10 @@
 //! backed by an adaptive-interval poll as a safety net for failures that
 //! produce no config-change event at all (e.g. a blackholed route).
 
+use netstatus::StatusField;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::mpsc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
 
 /// How often the poll thread re-checks `enabled` while idle (matches the
@@ -46,6 +48,40 @@ impl Default for Intervals {
 pub enum CheckScope {
     Full,
     ConfidenceOnly,
+}
+
+/// Runs one collection pass — full or confidence-only per `scope` — calling
+/// `on_field` for every field as it arrives (e.g. to fold it into a running
+/// `PartialStatus`) and then forwarding it to `tx`, but only as long as
+/// `generation` still matches `this_gen` — if a newer run (manual or auto)
+/// has started in the meantime, this run's remaining fields are dropped
+/// from `tx` instead of overwriting fresher data. `on_field` always sees
+/// every field regardless of generation, since a stale run's data is still
+/// the most recent thing known until a newer run's fields replace it.
+///
+/// Shared by the CLI `watch` subcommand and the TUI's auto-refresh, which
+/// both run this same fire/generation-guard dance but differ in what they
+/// do with each field (the CLI folds it into a `PartialStatus` to derive
+/// `health`; the TUI merges it into the screen's own `PartialStatus` in its
+/// render loop instead).
+pub fn run_and_forward(
+    tx: &mpsc::Sender<StatusField>,
+    generation: &Arc<AtomicU64>,
+    this_gen: u64,
+    scope: CheckScope,
+    mut on_field: impl FnMut(&StatusField),
+) {
+    let (inner_tx, inner_rx) = mpsc::channel();
+    std::thread::spawn(move || match scope {
+        CheckScope::Full => netstatus::collect_streaming(inner_tx),
+        CheckScope::ConfidenceOnly => netstatus::collect_confidence_streaming(inner_tx),
+    });
+    for field in inner_rx {
+        on_field(&field);
+        if generation.load(Ordering::SeqCst) == this_gen {
+            let _ = tx.send(field);
+        }
+    }
 }
 
 /// Keeps the config-change watcher (if it started) and the adaptive-poll
