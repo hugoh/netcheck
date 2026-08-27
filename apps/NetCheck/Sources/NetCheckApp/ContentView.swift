@@ -318,8 +318,10 @@ struct ContentView: View {
             }
 
             PanelBox(title: "DNS resolution") {
-                if let resolution = status.resolution {
-                    List(resolution) { r in
+                if status.resolution.isEmpty {
+                    CollectingPlaceholder()
+                } else {
+                    List(status.resolution) { r in
                         HStack {
                             StatusIcon(ok: r.resolved)
                             Text(r.domain)
@@ -330,8 +332,6 @@ struct ContentView: View {
                         }
                     }
                     .listStyle(.inset(alternatesRowBackgrounds: true))
-                } else {
-                    CollectingPlaceholder()
                 }
             }
         }
@@ -348,8 +348,10 @@ struct ContentView: View {
                 pingList(status.reachabilityV6)
             }
             PanelBox(title: "Reachability (domains, TCP:443)") {
-                if let results = status.domainReachability {
-                    List(results) { c in
+                if status.domainReachability.isEmpty {
+                    CollectingPlaceholder()
+                } else {
+                    List(status.domainReachability) { c in
                         HStack {
                             StatusIcon(ok: c.reachable)
                             Text(c.target)
@@ -359,8 +361,6 @@ struct ContentView: View {
                         }
                     }
                     .listStyle(.inset(alternatesRowBackgrounds: true))
-                } else {
-                    CollectingPlaceholder()
                 }
             }
         }
@@ -368,8 +368,10 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func pingList(_ results: [PingResult]?) -> some View {
-        if let results {
+    private func pingList(_ results: [PingResult]) -> some View {
+        if results.isEmpty {
+            CollectingPlaceholder()
+        } else {
             List(results) { p in
                 HStack {
                     StatusIcon(ok: p.reachable)
@@ -380,8 +382,6 @@ struct ContentView: View {
                 }
             }
             .listStyle(.inset(alternatesRowBackgrounds: true))
-        } else {
-            CollectingPlaceholder()
         }
     }
 

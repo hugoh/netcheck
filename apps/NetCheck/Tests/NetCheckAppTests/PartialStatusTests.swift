@@ -105,6 +105,46 @@ struct PartialNetworkStatusTests {
         let data = try! JSONSerialization.data(withJSONObject: json)
         return try! JSONDecoder().decode(StatusFieldEnvelope.self, from: data)
     }
+
+    private func decode(_ json: [String: Any]) -> StatusFieldEnvelope {
+        let data = try! JSONSerialization.data(withJSONObject: json)
+        return try! JSONDecoder().decode(StatusFieldEnvelope.self, from: data)
+    }
+
+    @Test func mergeUpsertsPingResultByTargetInsteadOfReplacingTheWholeList() {
+        var status = PartialNetworkStatus()
+        status.merge(decode([
+            "Ping": ["group": "Reachability", "result": ["target": "1.1.1.1", "reachable": true, "rtt_ms": 12.0]],
+        ]))
+        status.merge(decode([
+            "Ping": ["group": "Reachability", "result": ["target": "8.8.8.8", "reachable": true, "rtt_ms": 8.0]],
+        ]))
+        #expect(status.reachability.map(\.target) == ["1.1.1.1", "8.8.8.8"])
+
+        // A later result for the same target replaces it in place rather
+        // than appending a duplicate or reordering the list.
+        status.merge(decode([
+            "Ping": ["group": "Reachability", "result": ["target": "1.1.1.1", "reachable": false, "rtt_ms": NSNull()]],
+        ]))
+        #expect(status.reachability.map(\.target) == ["1.1.1.1", "8.8.8.8"])
+        #expect(status.reachability.first?.reachable == false)
+    }
+
+    @Test func mergeIgnoresPingUpdatesForGroupsThisUIDoesNotSurface() {
+        var status = PartialNetworkStatus()
+        status.merge(decode([
+            "Ping": ["group": "GatewayReachability", "result": ["target": "10.0.0.1", "reachable": true, "rtt_ms": 1.0]],
+        ]))
+        #expect(status.reachability.isEmpty)
+        #expect(status.reachabilityV6.isEmpty)
+    }
+
+    @Test func mergeMarksGroupComplete() {
+        var status = PartialNetworkStatus()
+        #expect(status.completedGroups.isEmpty)
+        status.merge(decode(["GroupComplete": "Reachability"]))
+        #expect(status.completedGroups == [.reachability])
+    }
 }
 
 struct ConnectionConfidenceTests {
@@ -118,6 +158,7 @@ struct ConnectionConfidenceTests {
         status.reachability = [PingResult(target: "1.1.1.1", reachable: pingOk, rttMs: nil)]
         status.reachabilityV6 = [PingResult(target: "::1", reachable: false, rttMs: nil)]
         status.domainReachability = [ConnectResult(target: "example.com", port: 443, reachable: tcpOk, rttMs: nil)]
+        status.completedGroups = [.resolution, .reachability, .reachabilityV6, .domainReachability]
         return status
     }
 
@@ -149,6 +190,22 @@ struct ConnectionConfidenceTests {
         status.reachability = [PingResult(target: "1.1.1.1", reachable: false, rttMs: nil)]
         status.reachabilityV6 = [PingResult(target: "::1", reachable: true, rttMs: nil)]
         status.domainReachability = [ConnectResult(target: "example.com", port: 443, reachable: false, rttMs: nil)]
+        status.completedGroups = [.resolution, .reachability, .reachabilityV6, .domainReachability]
         #expect(status.confidence == .limited)
+    }
+
+    @Test func confidenceWaitsForEachGroupToComplete() {
+        var status = PartialNetworkStatus()
+        status.resolution = [ResolutionResult(domain: "example.com", resolved: true, addresses: [], durationMs: nil)]
+        status.reachability = [PingResult(target: "1.1.1.1", reachable: true, rttMs: nil)]
+        status.reachabilityV6 = [PingResult(target: "::1", reachable: true, rttMs: nil)]
+        status.domainReachability = [ConnectResult(target: "example.com", port: 443, reachable: true, rttMs: nil)]
+        #expect(status.confidence == nil, "no group has been marked complete yet")
+
+        status.completedGroups.insert(.reachability)
+        #expect(status.confidence == nil, "still missing reachabilityV6/resolution/domainReachability")
+
+        status.completedGroups.formUnion([.reachabilityV6, .resolution, .domainReachability])
+        #expect(status.confidence == .online)
     }
 }

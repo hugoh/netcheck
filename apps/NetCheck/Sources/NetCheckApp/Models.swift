@@ -58,6 +58,28 @@ struct ConnectResult: Codable, Identifiable {
     let rttMs: Double?
 }
 
+/// Which target list a streamed `Ping`/`Connect` item, or a `GroupComplete`
+/// marker, belongs to. Mirrors `netstatus::status::ProbeGroup` (Rust).
+enum ProbeGroup: String, Codable {
+    case reachability = "Reachability"
+    case reachabilityV6 = "ReachabilityV6"
+    case gatewayReachability = "GatewayReachability"
+    case nameserverReachability = "NameserverReachability"
+    case domainReachability = "DomainReachability"
+    case nameserverConnect = "NameserverConnect"
+    case resolution = "Resolution"
+}
+
+struct PingUpdate: Decodable {
+    let group: ProbeGroup
+    let result: PingResult
+}
+
+struct ConnectUpdate: Decodable {
+    let group: ProbeGroup
+    let result: ConnectResult
+}
+
 struct ProxyEndpoint: Codable {
     let enabled: Bool
     let host: String?

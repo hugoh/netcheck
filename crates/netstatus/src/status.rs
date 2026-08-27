@@ -240,21 +240,41 @@ pub fn collect() -> NetworkStatus {
     })
 }
 
-/// One probe's result, delivered as soon as that probe completes. Exactly
-/// one variant per `NetworkStatus` field.
+/// Which target list a streamed `Ping`/`Connect` item, or a `GroupComplete`
+/// marker, belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+pub enum ProbeGroup {
+    Reachability,
+    ReachabilityV6,
+    GatewayReachability,
+    NameserverReachability,
+    DomainReachability,
+    NameserverConnect,
+    Resolution,
+}
+
+/// One probe's result, delivered as soon as that probe completes. For a
+/// target-list probe (`Ping`/`Connect`/`Resolution`), that's per-target, not
+/// per-group — a slow or unreachable target no longer holds up the rest of
+/// its list from being visible (see `for_each_concurrent`). `GroupComplete`
+/// marks a target list as fully drained; only sent for the four groups
+/// `PartialStatus::confidence` needs a completeness signal for.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum StatusField {
     Interfaces(Vec<Interface>),
     Vpn(VpnStatus),
     Resolvers(Vec<Resolver>),
     SplitDns(bool),
-    Reachability(Vec<PingResult>),
-    ReachabilityV6(Vec<PingResult>),
-    Resolution(Vec<ResolutionResult>),
-    DomainReachability(Vec<ConnectResult>),
-    GatewayReachability(Vec<PingResult>),
-    NameserverReachability(Vec<PingResult>),
-    NameserverConnect(Vec<ConnectResult>),
+    Ping {
+        group: ProbeGroup,
+        result: PingResult,
+    },
+    Connect {
+        group: ProbeGroup,
+        result: ConnectResult,
+    },
+    Resolution(ResolutionResult),
+    GroupComplete(ProbeGroup),
     Proxy(ProxyConfig),
     WifiIdentity(WifiIdentity),
     WifiRadio(WifiRadio),
@@ -265,7 +285,9 @@ pub enum StatusField {
 /// Spawns the four probes that determine `ConnectionConfidence` — DNS
 /// resolution, ICMP reachability (v4+v6), TCP connect — shared by
 /// `collect_streaming` (which runs them alongside everything else) and
-/// `collect_confidence_streaming` (which runs only these).
+/// `collect_confidence_streaming` (which runs only these). Each target's
+/// result streams individually as it completes, followed by one
+/// `GroupComplete` once its whole list has drained.
 fn spawn_core_signal_probes<'scope>(
     scope: &'scope std::thread::Scope<'scope, '_>,
     tx: &mpsc::Sender<StatusField>,
@@ -273,34 +295,46 @@ fn spawn_core_signal_probes<'scope>(
     {
         let tx = tx.clone();
         scope.spawn(move || {
-            let _ = tx.send(StatusField::Reachability(reachability::ping_all(
-                DEFAULT_PING_TARGETS,
-            )));
+            reachability::ping_each(DEFAULT_PING_TARGETS, |result| {
+                let _ = tx.send(StatusField::Ping {
+                    group: ProbeGroup::Reachability,
+                    result,
+                });
+            });
+            let _ = tx.send(StatusField::GroupComplete(ProbeGroup::Reachability));
         });
     }
     {
         let tx = tx.clone();
         scope.spawn(move || {
-            let _ = tx.send(StatusField::ReachabilityV6(reachability::ping_all(
-                DEFAULT_PING_TARGETS_V6,
-            )));
+            reachability::ping_each(DEFAULT_PING_TARGETS_V6, |result| {
+                let _ = tx.send(StatusField::Ping {
+                    group: ProbeGroup::ReachabilityV6,
+                    result,
+                });
+            });
+            let _ = tx.send(StatusField::GroupComplete(ProbeGroup::ReachabilityV6));
         });
     }
     {
         let tx = tx.clone();
         scope.spawn(move || {
-            let _ = tx.send(StatusField::Resolution(resolution::resolve_all(
-                DEFAULT_RESOLUTION_TARGETS,
-            )));
+            resolution::resolve_each(DEFAULT_RESOLUTION_TARGETS, |result| {
+                let _ = tx.send(StatusField::Resolution(result));
+            });
+            let _ = tx.send(StatusField::GroupComplete(ProbeGroup::Resolution));
         });
     }
     {
         let tx = tx.clone();
         scope.spawn(move || {
-            let _ = tx.send(StatusField::DomainReachability(connect::connect_all(
-                DEFAULT_RESOLUTION_TARGETS,
-                443,
-            )));
+            connect::connect_each(DEFAULT_RESOLUTION_TARGETS, 443, |result| {
+                let _ = tx.send(StatusField::Connect {
+                    group: ProbeGroup::DomainReachability,
+                    result,
+                });
+            });
+            let _ = tx.send(StatusField::GroupComplete(ProbeGroup::DomainReachability));
         });
     }
 }
@@ -324,19 +358,28 @@ pub fn collect_streaming(tx: mpsc::Sender<StatusField>) {
             let nameserver_ips = dns::nameserver_ips(&resolvers);
             let _ = tx.send(StatusField::Resolvers(resolvers));
             let targets: Vec<&str> = nameserver_ips.iter().map(String::as_str).collect();
-            let _ = tx.send(StatusField::NameserverReachability(reachability::ping_all(
-                &targets,
-            )));
-            let _ = tx.send(StatusField::NameserverConnect(connect::connect_all(
-                &targets, 53,
-            )));
+            reachability::ping_each(&targets, |result| {
+                let _ = tx.send(StatusField::Ping {
+                    group: ProbeGroup::NameserverReachability,
+                    result,
+                });
+            });
+            connect::connect_each(&targets, 53, |result| {
+                let _ = tx.send(StatusField::Connect {
+                    group: ProbeGroup::NameserverConnect,
+                    result,
+                });
+            });
         });
         scope.spawn(|| {
             let ips = gateway::default_gateway_ips();
             let targets: Vec<&str> = ips.iter().map(String::as_str).collect();
-            let _ = tx.send(StatusField::GatewayReachability(reachability::ping_all(
-                &targets,
-            )));
+            reachability::ping_each(&targets, |result| {
+                let _ = tx.send(StatusField::Ping {
+                    group: ProbeGroup::GatewayReachability,
+                    result,
+                });
+            });
         });
         scope.spawn(|| {
             let _ = tx.send(StatusField::Proxy(proxy::proxy_config()));
@@ -373,28 +416,44 @@ pub fn collect_confidence_streaming(tx: mpsc::Sender<StatusField>) {
     });
 }
 
+/// Replaces the entry in `list` matching `item` by `key`, or appends it if
+/// no entry matches — keeps a target's position stable across re-runs
+/// (first-seen order) instead of the list reshuffling every refresh.
+fn upsert_by<T>(list: &mut Vec<T>, item: T, key: impl Fn(&T) -> &str) {
+    match list.iter_mut().find(|existing| key(existing) == key(&item)) {
+        Some(existing) => *existing = item,
+        None => list.push(item),
+    }
+}
+
 /// Accumulates `StatusField`s as they stream in from `collect_streaming`,
-/// one `Option` field per `StatusField` variant. Shared by every UI
-/// (`netcheck-tui`, `netcheck-gui`) so a new `StatusField` variant only
-/// needs its `merge`/`has_any` arm added once instead of once per UI.
+/// one `Option` field per single-value `StatusField` variant and one `Vec`
+/// (upserted by target, not replaced wholesale) per target-list variant.
+/// Shared by every UI (`netcheck-tui`, `netcheck-gui`) so a new
+/// `StatusField` variant only needs its `merge`/`has_any` arm added once
+/// instead of once per UI.
 #[derive(Debug, Clone, Default)]
 pub struct PartialStatus {
     pub interfaces: Option<Vec<Interface>>,
     pub vpn: Option<VpnStatus>,
     pub split_dns: Option<bool>,
     pub resolvers: Option<Vec<Resolver>>,
-    pub reachability: Option<Vec<PingResult>>,
-    pub reachability_v6: Option<Vec<PingResult>>,
-    pub resolution: Option<Vec<ResolutionResult>>,
-    pub domain_reachability: Option<Vec<ConnectResult>>,
-    pub gateway_reachability: Option<Vec<PingResult>>,
-    pub nameserver_reachability: Option<Vec<PingResult>>,
-    pub nameserver_connect: Option<Vec<ConnectResult>>,
+    pub reachability: Vec<PingResult>,
+    pub reachability_v6: Vec<PingResult>,
+    pub resolution: Vec<ResolutionResult>,
+    pub domain_reachability: Vec<ConnectResult>,
+    pub gateway_reachability: Vec<PingResult>,
+    pub nameserver_reachability: Vec<PingResult>,
+    pub nameserver_connect: Vec<ConnectResult>,
     pub proxy: Option<ProxyConfig>,
     pub wifi_identity: Option<WifiIdentity>,
     pub wifi_radio: Option<WifiRadio>,
     pub ip_stack: Option<IpStack>,
     pub captive_portal: Option<CaptivePortalStatus>,
+    /// Groups whose target list has fully drained at least once — only
+    /// tracked for the four groups `confidence` needs a completeness signal
+    /// for (see `StatusField::GroupComplete`).
+    completed_groups: std::collections::HashSet<ProbeGroup>,
 }
 
 impl PartialStatus {
@@ -404,13 +463,38 @@ impl PartialStatus {
             StatusField::Vpn(v) => self.vpn = Some(v),
             StatusField::Resolvers(v) => self.resolvers = Some(v),
             StatusField::SplitDns(v) => self.split_dns = Some(v),
-            StatusField::Reachability(v) => self.reachability = Some(v),
-            StatusField::ReachabilityV6(v) => self.reachability_v6 = Some(v),
-            StatusField::Resolution(v) => self.resolution = Some(v),
-            StatusField::DomainReachability(v) => self.domain_reachability = Some(v),
-            StatusField::GatewayReachability(v) => self.gateway_reachability = Some(v),
-            StatusField::NameserverReachability(v) => self.nameserver_reachability = Some(v),
-            StatusField::NameserverConnect(v) => self.nameserver_connect = Some(v),
+            StatusField::Ping { group, result } => {
+                let list = match group {
+                    ProbeGroup::Reachability => &mut self.reachability,
+                    ProbeGroup::ReachabilityV6 => &mut self.reachability_v6,
+                    ProbeGroup::GatewayReachability => &mut self.gateway_reachability,
+                    ProbeGroup::NameserverReachability => &mut self.nameserver_reachability,
+                    ProbeGroup::DomainReachability
+                    | ProbeGroup::NameserverConnect
+                    | ProbeGroup::Resolution => {
+                        unreachable!("StatusField::Ping is never constructed with a connect/resolution group")
+                    }
+                };
+                upsert_by(list, result, |r| &r.target);
+            }
+            StatusField::Connect { group, result } => {
+                let list = match group {
+                    ProbeGroup::DomainReachability => &mut self.domain_reachability,
+                    ProbeGroup::NameserverConnect => &mut self.nameserver_connect,
+                    ProbeGroup::Reachability
+                    | ProbeGroup::ReachabilityV6
+                    | ProbeGroup::GatewayReachability
+                    | ProbeGroup::NameserverReachability
+                    | ProbeGroup::Resolution => {
+                        unreachable!("StatusField::Connect is never constructed with a ping/resolution group")
+                    }
+                };
+                upsert_by(list, result, |r| &r.target);
+            }
+            StatusField::Resolution(v) => upsert_by(&mut self.resolution, v, |r| &r.domain),
+            StatusField::GroupComplete(group) => {
+                self.completed_groups.insert(group);
+            }
             StatusField::Proxy(v) => self.proxy = Some(v),
             StatusField::WifiIdentity(v) => self.wifi_identity = Some(v),
             StatusField::WifiRadio(v) => self.wifi_radio = Some(v),
@@ -424,13 +508,13 @@ impl PartialStatus {
             || self.vpn.is_some()
             || self.resolvers.is_some()
             || self.split_dns.is_some()
-            || self.reachability.is_some()
-            || self.reachability_v6.is_some()
-            || self.resolution.is_some()
-            || self.domain_reachability.is_some()
-            || self.gateway_reachability.is_some()
-            || self.nameserver_reachability.is_some()
-            || self.nameserver_connect.is_some()
+            || !self.reachability.is_empty()
+            || !self.reachability_v6.is_empty()
+            || !self.resolution.is_empty()
+            || !self.domain_reachability.is_empty()
+            || !self.gateway_reachability.is_empty()
+            || !self.nameserver_reachability.is_empty()
+            || !self.nameserver_connect.is_empty()
             || self.proxy.is_some()
             || self.wifi_identity.is_some()
             || self.wifi_radio.is_some()
@@ -439,21 +523,28 @@ impl PartialStatus {
     }
 
     /// `None` until resolution, both reachability probes, domain
-    /// reachability, and the captive-portal probe have all arrived — a
-    /// partial view of only some signal categories would misreport
-    /// confidence (e.g. reading `Limited` just because DNS hasn't come back
-    /// yet, not because it failed, or reading `Online` before the
-    /// captive-portal cap has had a chance to apply).
+    /// reachability, and the captive-portal probe have all *fully drained*
+    /// (not just started arriving) — a partial view of only some signal
+    /// categories, or a group still mid-stream, would misreport confidence
+    /// (e.g. reading `Limited` just because DNS hasn't come back yet, not
+    /// because it failed, or reading `Online` before the captive-portal cap
+    /// has had a chance to apply).
     pub fn confidence(&self) -> Option<ConnectionConfidence> {
-        let resolution = self.resolution.as_ref()?;
-        let reachability = self.reachability.as_ref()?;
-        let reachability_v6 = self.reachability_v6.as_ref()?;
-        let domain_reachability = self.domain_reachability.as_ref()?;
+        for group in [
+            ProbeGroup::Resolution,
+            ProbeGroup::Reachability,
+            ProbeGroup::ReachabilityV6,
+            ProbeGroup::DomainReachability,
+        ] {
+            if !self.completed_groups.contains(&group) {
+                return None;
+            }
+        }
         let captive_portal = self.captive_portal.as_ref()?;
-        let dns_ok = majority_ok(resolution, |r| r.resolved);
-        let ping_ok = majority_ok(reachability, |p| p.reachable)
-            || majority_ok(reachability_v6, |p| p.reachable);
-        let tcp_ok = majority_ok(domain_reachability, |c| c.reachable);
+        let dns_ok = majority_ok(&self.resolution, |r| r.resolved);
+        let ping_ok = majority_ok(&self.reachability, |p| p.reachable)
+            || majority_ok(&self.reachability_v6, |p| p.reachable);
+        let tcp_ok = majority_ok(&self.domain_reachability, |c| c.reachable);
         Some(cap_for_captive_portal(
             confidence_from(dns_ok, ping_ok, tcp_ok),
             *captive_portal,
@@ -465,131 +556,196 @@ impl PartialStatus {
 mod tests {
     use super::*;
     use std::collections::HashSet;
-    use std::mem::discriminant;
 
-    /// Guards the send side of `collect_streaming`: every `StatusField`
-    /// variant must be sent exactly once. The receive side (each UI's
-    /// `PartialStatus::merge()`) is protected by an exhaustive match with no
-    /// wildcard arm, but nothing stops someone from adding a 12th variant
-    /// and forgetting the corresponding `scope.spawn(...)` block — that
-    /// would compile and pass every other test while silently wedging a UI
-    /// panel on "Collecting..." forever. This shells out to real macOS
-    /// tools (ping, scutil, system_profiler); it asserts on message count
-    /// and variant coverage, not on reachability values, so it's
-    /// deterministic even without live network.
+    /// Tallies `field`s into counts keyed by a caller-chosen label, so tests
+    /// can assert per-target-item counts (`Ping`/`Connect`/`Resolution`) and
+    /// per-group `GroupComplete` coverage without needing exact discriminant
+    /// matching for variants that are now sent more than once.
+    fn tally(received: &[StatusField]) -> std::collections::HashMap<&'static str, usize> {
+        let mut counts = std::collections::HashMap::new();
+        for field in received {
+            let label: &'static str = match field {
+                StatusField::Interfaces(_) => "Interfaces",
+                StatusField::Vpn(_) => "Vpn",
+                StatusField::Resolvers(_) => "Resolvers",
+                StatusField::SplitDns(_) => "SplitDns",
+                StatusField::Ping { .. } => "Ping",
+                StatusField::Connect { .. } => "Connect",
+                StatusField::Resolution(_) => "Resolution",
+                StatusField::GroupComplete(_) => "GroupComplete",
+                StatusField::Proxy(_) => "Proxy",
+                StatusField::WifiIdentity(_) => "WifiIdentity",
+                StatusField::WifiRadio(_) => "WifiRadio",
+                StatusField::IpStack(_) => "IpStack",
+                StatusField::CaptivePortal(_) => "CaptivePortal",
+            };
+            *counts.entry(label).or_insert(0) += 1;
+        }
+        counts
+    }
+
+    fn group_counts(
+        received: &[StatusField],
+        variant: impl Fn(&StatusField) -> Option<ProbeGroup>,
+    ) -> std::collections::HashMap<ProbeGroup, usize> {
+        let mut counts = std::collections::HashMap::new();
+        for field in received {
+            if let Some(group) = variant(field) {
+                *counts.entry(group).or_insert(0) += 1;
+            }
+        }
+        counts
+    }
+
+    /// Guards the send side of `collect_streaming`: every single-value
+    /// `StatusField` variant must be sent exactly once, every target-list
+    /// item must be sent once per target in its group's default target
+    /// list (or, for the two dynamic groups — gateway/nameserver IPs,
+    /// unknown until runtime — at least be present with a plausible count),
+    /// and exactly the four confidence-relevant groups get a
+    /// `GroupComplete`. This shells out to real macOS tools (ping, scutil,
+    /// system_profiler); it asserts on message counts and variant/group
+    /// coverage, not on reachability values, so it's deterministic even
+    /// without live network.
     #[test]
-    fn collect_streaming_sends_every_status_field_variant_exactly_once() {
+    fn collect_streaming_sends_every_status_field_and_probe_group() {
         let (tx, rx) = mpsc::channel();
         collect_streaming(tx);
-
         let received: Vec<StatusField> = rx.into_iter().collect();
-        assert_eq!(
-            received.len(),
-            16,
-            "expected exactly 16 StatusField messages, got {}: {received:?}",
-            received.len()
-        );
 
-        let all_variants: [StatusField; 16] = [
-            StatusField::Interfaces(Vec::new()),
-            StatusField::Vpn(VpnStatus {
-                tunnels: Vec::new(),
-                primary_interface: None,
-                connected: false,
-                split_tunnel: false,
-                routed_subnets: Vec::new(),
-            }),
-            StatusField::Resolvers(Vec::new()),
-            StatusField::SplitDns(false),
-            StatusField::Reachability(Vec::new()),
-            StatusField::ReachabilityV6(Vec::new()),
-            StatusField::Resolution(Vec::new()),
-            StatusField::DomainReachability(Vec::new()),
-            StatusField::GatewayReachability(Vec::new()),
-            StatusField::NameserverReachability(Vec::new()),
-            StatusField::NameserverConnect(Vec::new()),
-            StatusField::Proxy(proxy::ProxyConfig {
-                http: proxy::ProxyEndpoint {
-                    enabled: false,
-                    host: None,
-                    port: None,
-                },
-                https: proxy::ProxyEndpoint {
-                    enabled: false,
-                    host: None,
-                    port: None,
-                },
-                socks: proxy::ProxyEndpoint {
-                    enabled: false,
-                    host: None,
-                    port: None,
-                },
-                pac_url: None,
-                exceptions: Vec::new(),
-            }),
-            StatusField::WifiIdentity(WifiIdentity::default()),
-            StatusField::WifiRadio(WifiRadio::default()),
-            StatusField::IpStack(IpStack::None),
-            StatusField::CaptivePortal(crate::captive_portal::CaptivePortalStatus::Unknown),
-        ];
-
-        let mut seen: HashSet<usize> = HashSet::new();
-        for field in &received {
-            let matched = all_variants
-                .iter()
-                .position(|variant| discriminant(variant) == discriminant(field))
-                .unwrap_or_else(|| panic!("unexpected StatusField variant: {field:?}"));
-            assert!(
-                seen.insert(matched),
-                "StatusField variant sent more than once: {field:?}"
+        let counts = tally(&received);
+        for label in [
+            "Interfaces",
+            "Vpn",
+            "Resolvers",
+            "SplitDns",
+            "Proxy",
+            "WifiIdentity",
+            "WifiRadio",
+            "IpStack",
+            "CaptivePortal",
+        ] {
+            assert_eq!(
+                counts.get(label).copied().unwrap_or(0),
+                1,
+                "expected exactly one {label}, got {:?}: {received:?}",
+                counts.get(label)
             );
         }
+
+        let ping_counts = group_counts(&received, |f| match f {
+            StatusField::Ping { group, .. } => Some(*group),
+            _ => None,
+        });
         assert_eq!(
-            seen.len(),
-            all_variants.len(),
-            "not every StatusField variant was sent"
+            ping_counts.get(&ProbeGroup::Reachability).copied(),
+            Some(DEFAULT_PING_TARGETS.len()),
+            "expected one Ping per Reachability target"
+        );
+        assert_eq!(
+            ping_counts.get(&ProbeGroup::ReachabilityV6).copied(),
+            Some(DEFAULT_PING_TARGETS_V6.len()),
+            "expected one Ping per ReachabilityV6 target"
+        );
+        // Gateway/nameserver target counts are runtime-dependent (however
+        // many gateway/resolver IPs this machine has, possibly zero) — just
+        // assert the groups don't leak into each other's counts.
+        for group in [
+            ProbeGroup::DomainReachability,
+            ProbeGroup::NameserverConnect,
+            ProbeGroup::Resolution,
+        ] {
+            assert_eq!(ping_counts.get(&group), None, "{group:?} is not a Ping group");
+        }
+
+        let connect_counts = group_counts(&received, |f| match f {
+            StatusField::Connect { group, .. } => Some(*group),
+            _ => None,
+        });
+        assert_eq!(
+            connect_counts.get(&ProbeGroup::DomainReachability).copied(),
+            Some(DEFAULT_RESOLUTION_TARGETS.len()),
+            "expected one Connect per DomainReachability target"
+        );
+
+        assert_eq!(
+            counts.get("Resolution").copied(),
+            Some(DEFAULT_RESOLUTION_TARGETS.len()),
+            "expected one Resolution message per resolution target"
+        );
+
+        let complete_groups: HashSet<ProbeGroup> = received
+            .iter()
+            .filter_map(|f| match f {
+                StatusField::GroupComplete(g) => Some(*g),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            complete_groups,
+            HashSet::from([
+                ProbeGroup::Reachability,
+                ProbeGroup::ReachabilityV6,
+                ProbeGroup::Resolution,
+                ProbeGroup::DomainReachability,
+            ]),
+            "expected GroupComplete for exactly the four confidence-relevant groups"
         );
     }
 
-    /// Mirrors `collect_streaming_sends_every_status_field_variant_exactly_once`
-    /// for the confidence-only path: it must send exactly the four
-    /// confidence-determining variants, and nothing from the static-config
-    /// probes it's meant to skip.
+    /// Mirrors `collect_streaming_sends_every_status_field_and_probe_group`
+    /// for the confidence-only path: it must send only `Ping`/`Connect`/
+    /// `Resolution` items for the four confidence groups plus their
+    /// `GroupComplete` markers, and nothing from the static-config probes
+    /// it's meant to skip.
     #[test]
-    fn collect_confidence_streaming_sends_only_the_four_confidence_variants() {
+    fn collect_confidence_streaming_sends_only_the_four_confidence_groups() {
         let (tx, rx) = mpsc::channel();
         collect_confidence_streaming(tx);
-
         let received: Vec<StatusField> = rx.into_iter().collect();
-        assert_eq!(
-            received.len(),
-            4,
-            "expected exactly 4 StatusField messages, got {}: {received:?}",
-            received.len()
-        );
 
-        let expected_variants: [StatusField; 4] = [
-            StatusField::Reachability(Vec::new()),
-            StatusField::ReachabilityV6(Vec::new()),
-            StatusField::Resolution(Vec::new()),
-            StatusField::DomainReachability(Vec::new()),
-        ];
-
-        let mut seen: HashSet<usize> = HashSet::new();
-        for field in &received {
-            let matched = expected_variants
-                .iter()
-                .position(|variant| discriminant(variant) == discriminant(field))
-                .unwrap_or_else(|| panic!("unexpected StatusField variant: {field:?}"));
-            assert!(
-                seen.insert(matched),
-                "StatusField variant sent more than once: {field:?}"
+        for label in [
+            "Interfaces",
+            "Vpn",
+            "Resolvers",
+            "SplitDns",
+            "Proxy",
+            "WifiIdentity",
+            "WifiRadio",
+            "IpStack",
+            "CaptivePortal",
+        ] {
+            assert_eq!(
+                tally(&received).get(label).copied().unwrap_or(0),
+                0,
+                "confidence-only streaming must not send {label}"
             );
         }
+
         assert_eq!(
-            seen.len(),
-            expected_variants.len(),
-            "not every confidence-signal StatusField variant was sent"
+            received.len(),
+            DEFAULT_PING_TARGETS.len()
+                + DEFAULT_PING_TARGETS_V6.len()
+                + DEFAULT_RESOLUTION_TARGETS.len() * 2
+                + 4,
+            "expected one message per target across the four confidence groups, plus 4 GroupComplete: {received:?}"
+        );
+
+        let complete_groups: HashSet<ProbeGroup> = received
+            .iter()
+            .filter_map(|f| match f {
+                StatusField::GroupComplete(g) => Some(*g),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            complete_groups,
+            HashSet::from([
+                ProbeGroup::Reachability,
+                ProbeGroup::ReachabilityV6,
+                ProbeGroup::Resolution,
+                ProbeGroup::DomainReachability,
+            ]),
         );
     }
 
@@ -824,15 +980,54 @@ mod tests {
     #[test]
     fn partial_status_confidence_waits_for_captive_portal() {
         let mut partial = PartialStatus {
-            resolution: Some(resolution_results(&[true; 7])),
-            reachability: Some(ping_results(&[true; 7])),
-            reachability_v6: Some(ping_results(&[true; 5])),
-            domain_reachability: Some(connect_results(&[true; 7])),
+            resolution: resolution_results(&[true; 7]),
+            reachability: ping_results(&[true; 7]),
+            reachability_v6: ping_results(&[true; 5]),
+            domain_reachability: connect_results(&[true; 7]),
+            completed_groups: HashSet::from([
+                ProbeGroup::Resolution,
+                ProbeGroup::Reachability,
+                ProbeGroup::ReachabilityV6,
+                ProbeGroup::DomainReachability,
+            ]),
             ..Default::default()
         };
         assert_eq!(partial.confidence(), None);
 
         partial.captive_portal = Some(captive_portal::CaptivePortalStatus::Detected);
         assert_eq!(partial.confidence(), Some(ConnectionConfidence::Limited));
+    }
+
+    #[test]
+    fn partial_status_confidence_waits_for_each_group_to_complete() {
+        let mut partial = PartialStatus {
+            resolution: resolution_results(&[true; 7]),
+            reachability: ping_results(&[true; 7]),
+            reachability_v6: ping_results(&[true; 5]),
+            domain_reachability: connect_results(&[true; 7]),
+            captive_portal: Some(captive_portal::CaptivePortalStatus::Clear),
+            ..Default::default()
+        };
+        assert_eq!(
+            partial.confidence(),
+            None,
+            "no group has been marked complete yet"
+        );
+
+        partial
+            .completed_groups
+            .insert(ProbeGroup::Reachability);
+        assert_eq!(
+            partial.confidence(),
+            None,
+            "still missing ReachabilityV6/Resolution/DomainReachability completion"
+        );
+
+        partial.completed_groups.extend([
+            ProbeGroup::ReachabilityV6,
+            ProbeGroup::Resolution,
+            ProbeGroup::DomainReachability,
+        ]);
+        assert_eq!(partial.confidence(), Some(ConnectionConfidence::Online));
     }
 }

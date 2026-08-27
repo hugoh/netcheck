@@ -18,15 +18,18 @@ func vpnScopedDomains(_ resolvers: [Resolver]) -> [String] {
 /// One line of `netcheck stream`'s NDJSON output — exactly one field is
 /// non-nil per envelope, matching Rust's `StatusField` enum (serde's
 /// default externally-tagged representation: `{"VariantName": <data>}`).
+/// `ping`/`connect`/`resolution` arrive per-target, not per-list — a slow or
+/// unreachable target no longer holds up the rest of its list from
+/// appearing (see `PartialNetworkStatus.merge`).
 struct StatusFieldEnvelope: Decodable {
     let interfaces: [NetInterface]?
     let vpn: VpnStatus?
     let resolvers: [Resolver]?
     let splitDns: Bool?
-    let reachability: [PingResult]?
-    let reachabilityV6: [PingResult]?
-    let resolution: [ResolutionResult]?
-    let domainReachability: [ConnectResult]?
+    let ping: PingUpdate?
+    let connect: ConnectUpdate?
+    let resolution: ResolutionResult?
+    let groupComplete: ProbeGroup?
     let proxy: ProxyConfig?
     let wifiIdentity: WifiIdentity?
     let wifiRadio: WifiRadio?
@@ -38,10 +41,10 @@ struct StatusFieldEnvelope: Decodable {
         case vpn = "Vpn"
         case resolvers = "Resolvers"
         case splitDns = "SplitDns"
-        case reachability = "Reachability"
-        case reachabilityV6 = "ReachabilityV6"
+        case ping = "Ping"
+        case connect = "Connect"
         case resolution = "Resolution"
-        case domainReachability = "DomainReachability"
+        case groupComplete = "GroupComplete"
         case proxy = "Proxy"
         case wifiIdentity = "WifiIdentity"
         case wifiRadio = "WifiRadio"
@@ -51,29 +54,47 @@ struct StatusFieldEnvelope: Decodable {
 }
 
 /// Progressively-filled network status, mirroring netcheck-tui/-gui's
-/// `PartialStatus`. Fields start `nil` and are merged in as each
-/// `StatusFieldEnvelope` line arrives; a refresh never blanks a field back
-/// to `nil` — only a new value replaces the old one.
+/// `PartialStatus`. Single-value fields start `nil` and are merged in as
+/// each `StatusFieldEnvelope` line arrives; a refresh never blanks a field
+/// back to `nil` — only a new value replaces the old one. Target-list
+/// fields (`reachability`, `resolution`, ...) start empty and are upserted
+/// by target as each item streams in, so fast targets show up immediately
+/// instead of waiting on the slowest one in their group.
 struct PartialNetworkStatus {
     var interfaces: [NetInterface]?
     var vpn: VpnStatus?
     var splitDns: Bool?
     var resolvers: [Resolver]?
-    var reachability: [PingResult]?
-    var reachabilityV6: [PingResult]?
-    var resolution: [ResolutionResult]?
-    var domainReachability: [ConnectResult]?
+    var reachability: [PingResult] = []
+    var reachabilityV6: [PingResult] = []
+    var resolution: [ResolutionResult] = []
+    var domainReachability: [ConnectResult] = []
     var proxy: ProxyConfig?
     var wifiIdentity: WifiIdentity?
     var wifiRadio: WifiRadio?
     var ipStack: IpStack?
     var captivePortal: CaptivePortalStatus?
+    /// Groups whose target list has fully drained at least once — only
+    /// tracked for the four groups `confidence` needs a completeness signal
+    /// for (see `StatusFieldEnvelope.groupComplete`).
+    var completedGroups: Set<ProbeGroup> = []
 
     var hasAny: Bool {
         interfaces != nil || vpn != nil || resolvers != nil || splitDns != nil
-            || reachability != nil || reachabilityV6 != nil || resolution != nil
-            || domainReachability != nil || proxy != nil || wifiIdentity != nil
+            || !reachability.isEmpty || !reachabilityV6.isEmpty || !resolution.isEmpty
+            || !domainReachability.isEmpty || proxy != nil || wifiIdentity != nil
             || wifiRadio != nil || ipStack != nil || captivePortal != nil
+    }
+
+    /// Replaces the entry in `list` matching `item` by `key`, or appends it
+    /// if no entry matches — keeps a target's position stable across
+    /// re-runs instead of the list reshuffling every refresh.
+    private func upsert<T>(_ list: inout [T], _ item: T, key: (T) -> String) {
+        if let idx = list.firstIndex(where: { key($0) == key(item) }) {
+            list[idx] = item
+        } else {
+            list.append(item)
+        }
     }
 
     mutating func merge(_ envelope: StatusFieldEnvelope) {
@@ -81,10 +102,23 @@ struct PartialNetworkStatus {
         if let v = envelope.vpn { vpn = v }
         if let v = envelope.resolvers { resolvers = v }
         if let v = envelope.splitDns { splitDns = v }
-        if let v = envelope.reachability { reachability = v }
-        if let v = envelope.reachabilityV6 { reachabilityV6 = v }
-        if let v = envelope.resolution { resolution = v }
-        if let v = envelope.domainReachability { domainReachability = v }
+        if let v = envelope.ping {
+            switch v.group {
+            case .reachability: upsert(&reachability, v.result, key: { $0.target })
+            case .reachabilityV6: upsert(&reachabilityV6, v.result, key: { $0.target })
+            case .gatewayReachability, .nameserverReachability:
+                break // not surfaced in this UI
+            case .domainReachability, .nameserverConnect, .resolution:
+                break // never sent as a Ping update
+            }
+        }
+        if let v = envelope.connect, v.group == .domainReachability {
+            upsert(&domainReachability, v.result, key: { $0.target })
+        }
+        if let v = envelope.resolution {
+            upsert(&resolution, v, key: { $0.domain })
+        }
+        if let g = envelope.groupComplete { completedGroups.insert(g) }
         if let v = envelope.proxy { proxy = v }
         if let v = envelope.wifiIdentity { wifiIdentity = v }
         if let v = envelope.wifiRadio { wifiRadio = v }
@@ -141,11 +175,12 @@ private func confidenceFrom(dnsOk: Bool, pingOk: Bool, tcpOk: Bool) -> Connectio
 
 extension PartialNetworkStatus {
     /// `nil` until resolution, both reachability probes, and domain
-    /// reachability have all arrived.
+    /// reachability have all *fully drained* (not just started arriving) —
+    /// a group still mid-stream would misreport confidence the same way a
+    /// missing category would.
     var confidence: ConnectionConfidence? {
-        guard let resolution, let reachability, let reachabilityV6, let domainReachability else {
-            return nil
-        }
+        let requiredGroups: Set<ProbeGroup> = [.resolution, .reachability, .reachabilityV6, .domainReachability]
+        guard requiredGroups.isSubset(of: completedGroups) else { return nil }
         let dnsOk = resolution.contains { $0.resolved }
         let pingOk = reachability.contains { $0.reachable } || reachabilityV6.contains { $0.reachable }
         let tcpOk = domainReachability.contains { $0.reachable }

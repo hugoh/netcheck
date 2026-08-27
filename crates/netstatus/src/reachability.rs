@@ -1,4 +1,4 @@
-use crate::concurrent::map_all;
+use crate::concurrent::{for_each_concurrent, map_all};
 use serde::Serialize;
 use std::net::IpAddr;
 use std::time::Duration;
@@ -49,6 +49,13 @@ pub fn ping(target: &str) -> PingResult {
 /// Pings each target concurrently and returns results in the same order.
 pub fn ping_all(targets: &[&str]) -> Vec<PingResult> {
     map_all(targets, ping)
+}
+
+/// Pings each target concurrently, calling `on_result` as each one
+/// completes rather than waiting for the slowest target before any result
+/// is visible.
+pub fn ping_each(targets: &[&str], on_result: impl Fn(PingResult) + Sync) {
+    for_each_concurrent(targets, ping, on_result);
 }
 
 #[cfg(test)]

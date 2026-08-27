@@ -385,10 +385,11 @@ fn connect_list(title: &'static str, results: &[netstatus::ConnectResult]) -> Li
     List::new(items).block(Block::default().borders(Borders::ALL).title(title))
 }
 
-fn resolution_list(resolution: Option<&[netstatus::ResolutionResult]>) -> List<'static> {
-    let items: Vec<ListItem> = match resolution {
-        None => vec![ListItem::new("Collecting...")],
-        Some(resolution) => resolution
+fn resolution_list(resolution: &[netstatus::ResolutionResult]) -> List<'static> {
+    let items: Vec<ListItem> = if resolution.is_empty() {
+        vec![ListItem::new("Collecting...")]
+    } else {
+        resolution
             .iter()
             .map(|r| {
                 let color = if r.resolved { Color::Green } else { Color::Red };
@@ -408,7 +409,7 @@ fn resolution_list(resolution: Option<&[netstatus::ResolutionResult]>) -> List<'
                     Span::raw(detail),
                 ]))
             })
-            .collect(),
+            .collect()
     };
     List::new(items).block(
         Block::default()
@@ -591,7 +592,7 @@ fn draw(
                         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
                         .split(rows[1]);
                     frame.render_widget(dns_list(status.resolvers.as_deref()), cols[0]);
-                    frame.render_widget(resolution_list(status.resolution.as_deref()), cols[1]);
+                    frame.render_widget(resolution_list(&status.resolution), cols[1]);
                 }
                 Tab::Reachability => {
                     let cols = Layout::default()
@@ -603,23 +604,17 @@ fn draw(
                         ])
                         .split(rows[1]);
                     frame.render_widget(
-                        ping_list(
-                            "Reachability (IPv4)",
-                            status.reachability.as_deref().unwrap_or(&[]),
-                        ),
+                        ping_list("Reachability (IPv4)", &status.reachability),
                         cols[0],
                     );
                     frame.render_widget(
-                        ping_list(
-                            "Reachability (IPv6)",
-                            status.reachability_v6.as_deref().unwrap_or(&[]),
-                        ),
+                        ping_list("Reachability (IPv6)", &status.reachability_v6),
                         cols[1],
                     );
                     frame.render_widget(
                         connect_list(
                             "Reachability (domains, TCP:443)",
-                            status.domain_reachability.as_deref().unwrap_or(&[]),
+                            &status.domain_reachability,
                         ),
                         cols[2],
                     );

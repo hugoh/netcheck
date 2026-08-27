@@ -1,4 +1,4 @@
-use crate::concurrent::map_all;
+use crate::concurrent::{for_each_concurrent, map_all};
 use serde::Serialize;
 use std::io;
 use std::net::{IpAddr, ToSocketAddrs};
@@ -57,6 +57,13 @@ pub fn resolve(domain: &str) -> ResolutionResult {
 /// Resolves each domain concurrently and returns results in the same order.
 pub fn resolve_all(domains: &[&str]) -> Vec<ResolutionResult> {
     map_all(domains, resolve)
+}
+
+/// Resolves each domain concurrently, calling `on_result` as each one
+/// completes rather than waiting for the slowest domain before any result
+/// is visible.
+pub fn resolve_each(domains: &[&str], on_result: impl Fn(ResolutionResult) + Sync) {
+    for_each_concurrent(domains, resolve, on_result);
 }
 
 #[cfg(test)]
