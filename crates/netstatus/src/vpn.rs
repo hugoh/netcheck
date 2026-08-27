@@ -21,7 +21,11 @@ pub struct VpnStatus {
     pub routed_subnets: Vec<String>,
 }
 
-fn is_tunnel_interface(name: &str) -> bool {
+/// True for a tunnel-family interface name (VPN/PPP), shared with
+/// `dns::has_split_dns`/`dns::vpn_scoped_domains` so both modules agree on
+/// what counts as a VPN interface instead of keeping separate copies of the
+/// prefix list.
+pub(crate) fn is_tunnel_interface(name: &str) -> bool {
     name.starts_with("utun") || name.starts_with("ppp") || name.starts_with("tun")
 }
 

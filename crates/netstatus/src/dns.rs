@@ -1,4 +1,5 @@
 use crate::sc_store::{Dict, cf_string, cf_string_array, get_dict};
+use crate::vpn::is_tunnel_interface;
 use serde::Serialize;
 use std::ffi::CString;
 use system_configuration::dynamic_store::{SCDynamicStore, SCDynamicStoreBuilder};
@@ -44,7 +45,7 @@ pub(crate) fn build_resolver(
 pub fn has_split_dns(resolvers: &[Resolver]) -> bool {
     resolvers
         .iter()
-        .any(|r| r.scoped && r.if_name.as_deref().is_some_and(|n| n.starts_with("utun")))
+        .any(|r| r.scoped && r.if_name.as_deref().is_some_and(is_tunnel_interface))
 }
 
 /// Unique nameserver IPs across all resolvers, in first-seen order —
@@ -64,11 +65,12 @@ pub fn nameserver_ips(resolvers: &[Resolver]) -> Vec<String> {
 
 /// Domains only resolvable via a VPN tunnel's own resolver — i.e. every
 /// scoped resolver's domain (falling back to its first search domain) for
-/// resolvers bound to a `utun*` interface. Deduplicated, order preserved.
+/// resolvers bound to a tunnel interface (see `is_tunnel_interface`).
+/// Deduplicated, order preserved.
 pub fn vpn_scoped_domains(resolvers: &[Resolver]) -> Vec<String> {
     let mut domains = Vec::new();
     for r in resolvers {
-        if !r.scoped || !r.if_name.as_deref().is_some_and(|n| n.starts_with("utun")) {
+        if !r.scoped || !r.if_name.as_deref().is_some_and(is_tunnel_interface) {
             continue;
         }
         if let Some(domain) = r
@@ -264,6 +266,21 @@ mod tests {
     }
 
     #[test]
+    fn detects_split_dns_via_ppp_tunnel() {
+        // Not just utun* — a PPP-based VPN counts too, matching
+        // vpn::is_tunnel_interface (which vpn_status() uses to report this
+        // same tunnel as connected).
+        let ppp_resolver = resolver(
+            Some("corp.example.com"),
+            &[],
+            &["10.10.10.10"],
+            Some(21),
+            Some("ppp0"),
+        );
+        assert!(has_split_dns(&[en0_resolver(), ppp_resolver]));
+    }
+
+    #[test]
     fn vpn_scoped_domains_collects_tunnel_resolver_domains() {
         let utun4_resolver = resolver(
             None,
@@ -279,6 +296,21 @@ mod tests {
                 "corp.example.com".to_string(),
                 "vpn.example.net".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn vpn_scoped_domains_collects_ppp_tunnel_resolver_domains() {
+        let ppp_resolver = resolver(
+            Some("corp.example.com"),
+            &[],
+            &["10.10.10.10"],
+            Some(21),
+            Some("ppp0"),
+        );
+        assert_eq!(
+            vpn_scoped_domains(&[en0_resolver(), ppp_resolver]),
+            vec!["corp.example.com".to_string()]
         );
     }
 
