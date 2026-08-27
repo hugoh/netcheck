@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Render schema/status-field.schema.json to browsable HTML docs in site/schema/"
+#MISE description="Render schema/*.schema.json to browsable HTML docs in site/schema/"
 set -euo pipefail
 
 # Uses json-schema-for-humans (https://github.com/coveooss/json-schema-for-humans),
@@ -12,17 +12,22 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUT_DIR="$ROOT_DIR/site/schema"
 
 rm -rf "$OUT_DIR"
-mkdir -p "$OUT_DIR"
 
-uvx --from json-schema-for-humans generate-schema-doc \
-	--config template_name=js_offline \
-	--expand-buttons \
-	"$ROOT_DIR/schema/status-field.schema.json" \
-	"$OUT_DIR/index.html"
+# One self-contained output directory per schema (its own index.html plus a
+# copy of the source .schema.json, for the relative links README already
+# uses) — every schema under schema/*.schema.json is handled the same way,
+# no name gets special-cased as the bare site/schema/index.html.
+for schema_path in "$ROOT_DIR"/schema/*.schema.json; do
+	name="$(basename "$schema_path" .schema.json)"
+	out="$OUT_DIR/$name"
+	mkdir -p "$out"
 
-# README links to schema/status-field.schema.json (works as-is on GitHub,
-# relative to the repo root) — copy it alongside the rendered docs so the
-# same relative link also resolves on the deployed site.
-cp "$ROOT_DIR/schema/status-field.schema.json" "$OUT_DIR/status-field.schema.json"
+	uvx --from json-schema-for-humans generate-schema-doc \
+		--config template_name=js_offline \
+		--expand-buttons \
+		"$schema_path" \
+		"$out/index.html"
 
-echo "Done: site/schema/index.html"
+	cp "$schema_path" "$out/$name.schema.json"
+	echo "Done: site/schema/$name/index.html"
+done

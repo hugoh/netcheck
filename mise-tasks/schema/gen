@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-#MISE description="Regenerate schema/status-field.schema.json from the StatusField Rust type"
+#MISE description="Regenerate schema/*.schema.json from the StatusField/WatchCommand Rust types"
 set -euo pipefail
 
 # Staleness is caught by netstatus::status::tests::committed_schema_matches_status_field
-# (part of `cargo test`/`mise run test:rust`, already in CI) — this task is
-# just the documented fix for when that test fails.
+# and ::committed_schema_matches_watch_command (part of `cargo test`/`mise
+# run test:rust`, already in CI) — this task is just the documented fix for
+# when either test fails.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-cargo run -p netcheck --bin netcheck-core -- schema >"$ROOT_DIR/schema/status-field.schema.json"
+cargo run -p netcheck --bin netcheck-core -- schema status-field >"$ROOT_DIR/schema/status-field.schema.json"
+cargo run -p netcheck --bin netcheck-core -- schema watch-command >"$ROOT_DIR/schema/watch-command.schema.json"
 
-echo "Done: schema/status-field.schema.json"
+echo "Done: schema/status-field.schema.json, schema/watch-command.schema.json"

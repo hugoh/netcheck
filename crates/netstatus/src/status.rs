@@ -287,6 +287,7 @@ pub enum ProbeGroup {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, schemars::JsonSchema)]
 pub enum WatchCommand {
     /// Run a full check immediately, same as a config-change fire.
+    #[schemars(title = "Refresh")]
     Refresh,
 }
 
@@ -361,6 +362,14 @@ pub enum StatusField {
 /// maintained docs (or the Swift decode types) can.
 pub fn status_field_schema() -> schemars::Schema {
     schemars::schema_for!(StatusField)
+}
+
+/// JSON Schema for `WatchCommand` — the other half of `watch`'s
+/// bidirectional wire format, read from stdin rather than written to
+/// stdout. Same rationale as `status_field_schema`: generated from the
+/// real type, not hand-written.
+pub fn watch_command_schema() -> schemars::Schema {
+    schemars::schema_for!(WatchCommand)
 }
 
 /// Spawns the four probes that determine `ConnectionConfidence` — DNS
@@ -830,12 +839,12 @@ mod tests {
         );
     }
 
-    /// Guards `schema/status-field.schema.json` (the wire format the README
-    /// links to, and what `netcheck schema` prints) against drifting from
-    /// `StatusField` itself — a schema hand-generated once and then left
-    /// alone would silently go stale the next time a field/variant changes.
-    /// Regenerate with `netcheck schema > schema/status-field.schema.json`
-    /// (or `mise run schema:gen`) if this fails.
+    /// Guards `schema/status-field.schema.json` (the `stream`/`watch`
+    /// stdout wire format the README links to, part of what `netcheck
+    /// schema` prints) against drifting from `StatusField` itself — a
+    /// schema hand-generated once and then left alone would silently go
+    /// stale the next time a field/variant changes. Regenerate with `mise
+    /// run schema:gen` if this fails.
     #[test]
     fn committed_schema_matches_status_field() {
         let generated = serde_json::to_string_pretty(&status_field_schema()).unwrap();
@@ -843,8 +852,21 @@ mod tests {
         assert_eq!(
             generated.trim_end(),
             committed.trim_end(),
-            "schema/status-field.schema.json is stale — regenerate with \
-             `netcheck schema > schema/status-field.schema.json` (or `mise run schema:gen`) \
+            "schema/status-field.schema.json is stale — regenerate with `mise run schema:gen` \
+             and commit the result"
+        );
+    }
+
+    /// Same as `committed_schema_matches_status_field`, for `watch`'s
+    /// stdin side (`schema/watch-command.schema.json`).
+    #[test]
+    fn committed_schema_matches_watch_command() {
+        let generated = serde_json::to_string_pretty(&watch_command_schema()).unwrap();
+        let committed = include_str!("../../../schema/watch-command.schema.json");
+        assert_eq!(
+            generated.trim_end(),
+            committed.trim_end(),
+            "schema/watch-command.schema.json is stale — regenerate with `mise run schema:gen` \
              and commit the result"
         );
     }

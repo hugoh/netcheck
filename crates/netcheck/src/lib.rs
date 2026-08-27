@@ -2,7 +2,7 @@
 pub mod tui;
 pub mod watch;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
@@ -20,6 +20,12 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum SchemaTarget {
+    StatusField,
+    WatchCommand,
 }
 
 #[derive(Subcommand)]
@@ -45,8 +51,14 @@ pub enum Command {
         #[arg(long, default_value_t = watch::Intervals::default().degraded.as_secs())]
         degraded_interval: u64,
     },
-    /// Print the JSON Schema for `stream`/`watch`'s NDJSON wire format
-    Schema,
+    /// Print JSON Schema for `stream`/`watch`'s NDJSON wire format
+    Schema {
+        /// Which schema to print: the StatusField output written to stdout
+        /// by `stream`/`watch`, or the WatchCommand input `watch` reads
+        /// from stdin
+        #[arg(value_enum, default_value_t = SchemaTarget::StatusField)]
+        target: SchemaTarget,
+    },
     /// Print network interfaces as JSON
     Interfaces,
     /// Print DNS resolver configuration as JSON
@@ -91,7 +103,10 @@ fn print_json<T: serde::Serialize>(value: &T) {
 pub fn run_command(command: Command) {
     match command {
         Command::Status => print_json(&netstatus::collect()),
-        Command::Schema => print_json(&netstatus::status_field_schema()),
+        Command::Schema { target } => match target {
+            SchemaTarget::StatusField => print_json(&netstatus::status_field_schema()),
+            SchemaTarget::WatchCommand => print_json(&netstatus::watch_command_schema()),
+        },
         Command::Stream => {
             use std::io::Write;
             let (tx, rx) = std::sync::mpsc::channel();

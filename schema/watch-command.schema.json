@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WatchCommand",
+  "description": "A command the `watch` subcommand accepts as NDJSON on stdin (one per\nline), symmetric with the `StatusField` NDJSON it writes to stdout.\n`watch` running at all already means auto-refresh is enabled — there's\nno separate enable/disable command, just \"trigger a check now\" for a\nprocess the caller already knows is running.",
+  "oneOf": [
+    {
+      "title": "Refresh",
+      "description": "Run a full check immediately, same as a config-change fire.",
+      "type": "string",
+      "const": "Refresh"
+    }
+  ]
+}

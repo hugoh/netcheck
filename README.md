@@ -179,13 +179,19 @@ hazard (a `FileHandle.bytes.lines`-based reader deadlocks its second
 concurrent instance in the same process, which is exactly how the SwiftUI
 app used to trigger a manual refresh before this existed).
 
-The full shape is defined as [JSON Schema](schema/status-field.schema.json),
-generated straight from the Rust `StatusField` type via
-[`schemars`](https://docs.rs/schemars) — run `netcheck schema` to print the
-current version; it can't drift from the real wire format the way
-hand-written docs could. Browse it rendered (via
-[json-schema-for-humans](https://github.com/coveooss/json-schema-for-humans))
-at [netcheck.larve.net/schema](https://netcheck.larve.net/schema/).
+Both directions are defined as JSON Schema, generated straight from the
+real Rust types so they can't drift from the wire format the way
+hand-written docs could:
+
+- **Output** (`StatusField`, written to stdout by `stream`/`watch`):
+  [schema/status-field.schema.json](schema/status-field.schema.json) — run
+  `netcheck schema` (or `netcheck schema status-field`) to print the
+  current version, or
+  [view the status field schema online](https://netcheck.larve.net/schema/status-field/).
+- **Input** (`WatchCommand`, read from stdin by `watch` only):
+  [schema/watch-command.schema.json](schema/watch-command.schema.json) —
+  run `netcheck schema watch-command` to print it, or
+  [view the watch command schema online](https://netcheck.larve.net/schema/watch-command/).
 
 Each status collection — every CLI `status`/`stream` call, and every
 dashboard auto-refresh — includes a plain HTTP (not HTTPS) request to
