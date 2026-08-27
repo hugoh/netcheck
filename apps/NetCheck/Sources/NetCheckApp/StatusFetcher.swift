@@ -9,6 +9,27 @@ import Foundation
 /// diagnostics (or refresh cadence) in Swift: auto-refresh runs `watch`,
 /// which re-checks on OS network-config changes plus an adaptive-interval
 /// poll as a safety net, instead of a fixed Swift-side timer.
+/// Accumulates raw pipe reads and splits off complete lines. `@unchecked
+/// Sendable`: a `readabilityHandler` is invoked serially by the OS for a
+/// given `FileHandle` — never concurrently with itself — so a single
+/// instance is safe to mutate across those calls despite not being
+/// actor-isolated.
+private final class LineBuffer: @unchecked Sendable {
+    private var data = Data()
+
+    func appendAndExtractLines(_ chunk: Data) -> [String] {
+        data.append(chunk)
+        var lines: [String] = []
+        while let newline = data.firstIndex(of: UInt8(ascii: "\n")) {
+            if let line = String(data: data[..<newline], encoding: .utf8) {
+                lines.append(line)
+            }
+            data.removeSubrange(...newline)
+        }
+        return lines
+    }
+}
+
 @MainActor
 final class StatusFetcher: ObservableObject {
     @Published var status = PartialNetworkStatus()
@@ -144,8 +165,17 @@ final class StatusFetcher: ObservableObject {
         }
     }
 
-    /// Runs `netcheck stream` and yields each line of its stdout as it's
-    /// written — no waiting for the process to exit, no blocking reads.
+    /// Runs `netcheck stream`/`watch` and yields each line of its stdout as
+    /// it's written — no waiting for the process to exit, no blocking reads.
+    ///
+    /// Uses `FileHandle.readabilityHandler` + manual line-buffering rather
+    /// than the more modern `FileHandle.bytes.lines` async sequence: with
+    /// two of these running concurrently in the same process — the
+    /// long-lived `watch` one from auto-refresh, plus a one-shot `stream`
+    /// one from a manual refresh — `bytes.lines` deadlocks the second
+    /// reader indefinitely (confirmed by a standalone repro: `stream`
+    /// starts, `watch` is already running, `stream` never yields a single
+    /// line or completes). `readabilityHandler` doesn't have this problem.
     private nonisolated static func streamLines(url: URL, args: [String]) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let process = Process()
@@ -155,21 +185,31 @@ final class StatusFetcher: ObservableObject {
             process.standardOutput = outPipe
             process.standardError = Pipe()
 
-            let readTask = Task {
-                do {
-                    try process.run()
-                    for try await line in outPipe.fileHandleForReading.bytes.lines {
-                        continuation.yield(line)
-                    }
-                    process.waitUntilExit()
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
+            let buffer = LineBuffer()
+            outPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                guard !data.isEmpty else {
+                    handle.readabilityHandler = nil
+                    return
+                }
+                for line in buffer.appendAndExtractLines(data) {
+                    continuation.yield(line)
                 }
             }
 
+            process.terminationHandler = { _ in
+                outPipe.fileHandleForReading.readabilityHandler = nil
+                continuation.finish()
+            }
+
+            do {
+                try process.run()
+            } catch {
+                continuation.finish(throwing: error)
+            }
+
             continuation.onTermination = { _ in
-                readTask.cancel()
+                outPipe.fileHandleForReading.readabilityHandler = nil
                 if process.isRunning { process.terminate() }
             }
         }
