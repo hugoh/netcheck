@@ -9,6 +9,7 @@ mod proxy;
 mod reachability;
 mod resolution;
 mod sc_store;
+mod sc_watch;
 mod status;
 mod vpn;
 mod wifi;
@@ -29,9 +30,11 @@ pub use ip_stack::{IpStack, detect_ip_stack};
 pub use proxy::{ProxyConfig, ProxyEndpoint, proxy_config};
 pub use reachability::{PingResult, ping, ping_all};
 pub use resolution::{DEFAULT_RESOLUTION_TARGETS, ResolutionResult, resolve, resolve_all};
+pub use sc_watch::{WatchHandle, watch_config_changes};
 pub use status::{
     ConnectionConfidence, DEFAULT_PING_TARGETS, DEFAULT_PING_TARGETS_V6, NetworkStatus,
-    PartialStatus, StatusField, collect, collect_streaming, confidence_only,
+    PartialStatus, StatusField, collect, collect_confidence_streaming, collect_streaming,
+    confidence_only,
 };
 pub use vpn::{VpnStatus, vpn_status};
 pub use wifi::{WifiIdentity, WifiRadio, WifiStatus, wifi_identity, wifi_radio, wifi_status};

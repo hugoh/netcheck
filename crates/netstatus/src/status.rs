@@ -262,12 +262,56 @@ pub enum StatusField {
     CaptivePortal(CaptivePortalStatus),
 }
 
+/// Spawns the four probes that determine `ConnectionConfidence` — DNS
+/// resolution, ICMP reachability (v4+v6), TCP connect — shared by
+/// `collect_streaming` (which runs them alongside everything else) and
+/// `collect_confidence_streaming` (which runs only these).
+fn spawn_core_signal_probes<'scope>(
+    scope: &'scope std::thread::Scope<'scope, '_>,
+    tx: &mpsc::Sender<StatusField>,
+) {
+    {
+        let tx = tx.clone();
+        scope.spawn(move || {
+            let _ = tx.send(StatusField::Reachability(reachability::ping_all(
+                DEFAULT_PING_TARGETS,
+            )));
+        });
+    }
+    {
+        let tx = tx.clone();
+        scope.spawn(move || {
+            let _ = tx.send(StatusField::ReachabilityV6(reachability::ping_all(
+                DEFAULT_PING_TARGETS_V6,
+            )));
+        });
+    }
+    {
+        let tx = tx.clone();
+        scope.spawn(move || {
+            let _ = tx.send(StatusField::Resolution(resolution::resolve_all(
+                DEFAULT_RESOLUTION_TARGETS,
+            )));
+        });
+    }
+    {
+        let tx = tx.clone();
+        scope.spawn(move || {
+            let _ = tx.send(StatusField::DomainReachability(connect::connect_all(
+                DEFAULT_RESOLUTION_TARGETS,
+                443,
+            )));
+        });
+    }
+}
+
 /// Runs every probe concurrently and sends each `StatusField` down `tx` the
 /// moment it completes, instead of waiting for the slowest probe before any
 /// result is visible. Send errors (receiver dropped) are ignored — the
 /// caller is expected to stop reading, not this function to stop probing.
 pub fn collect_streaming(tx: mpsc::Sender<StatusField>) {
     std::thread::scope(|scope| {
+        spawn_core_signal_probes(scope, &tx);
         scope.spawn(|| {
             let interfaces = interfaces::list_interfaces();
             let _ = tx.send(StatusField::IpStack(ip_stack::detect_ip_stack(&interfaces)));
@@ -295,27 +339,6 @@ pub fn collect_streaming(tx: mpsc::Sender<StatusField>) {
             )));
         });
         scope.spawn(|| {
-            let _ = tx.send(StatusField::Reachability(reachability::ping_all(
-                DEFAULT_PING_TARGETS,
-            )));
-        });
-        scope.spawn(|| {
-            let _ = tx.send(StatusField::ReachabilityV6(reachability::ping_all(
-                DEFAULT_PING_TARGETS_V6,
-            )));
-        });
-        scope.spawn(|| {
-            let _ = tx.send(StatusField::Resolution(resolution::resolve_all(
-                DEFAULT_RESOLUTION_TARGETS,
-            )));
-        });
-        scope.spawn(|| {
-            let _ = tx.send(StatusField::DomainReachability(connect::connect_all(
-                DEFAULT_RESOLUTION_TARGETS,
-                443,
-            )));
-        });
-        scope.spawn(|| {
             let _ = tx.send(StatusField::Proxy(proxy::proxy_config()));
         });
         // Two independent probes, not one: wifi_radio() is a fast CoreWLAN
@@ -334,6 +357,19 @@ pub fn collect_streaming(tx: mpsc::Sender<StatusField>) {
                 captive_portal::check_captive_portal(),
             ));
         });
+    });
+}
+
+/// Runs only the four confidence-determining probes (see
+/// [`spawn_core_signal_probes`]), skipping everything that can't have
+/// changed without an OS network-config event — interfaces, VPN, proxy,
+/// Wi-Fi (notably the slow `system_profiler`-backed identity lookup),
+/// ip-stack, and the captive-portal probe. Intended for a periodic
+/// safety-net recheck (e.g. a blackholed route, which produces no config
+/// event) where re-running the static-config probes would be pure waste.
+pub fn collect_confidence_streaming(tx: mpsc::Sender<StatusField>) {
+    std::thread::scope(|scope| {
+        spawn_core_signal_probes(scope, &tx);
     });
 }
 
@@ -512,6 +548,48 @@ mod tests {
             seen.len(),
             all_variants.len(),
             "not every StatusField variant was sent"
+        );
+    }
+
+    /// Mirrors `collect_streaming_sends_every_status_field_variant_exactly_once`
+    /// for the confidence-only path: it must send exactly the four
+    /// confidence-determining variants, and nothing from the static-config
+    /// probes it's meant to skip.
+    #[test]
+    fn collect_confidence_streaming_sends_only_the_four_confidence_variants() {
+        let (tx, rx) = mpsc::channel();
+        collect_confidence_streaming(tx);
+
+        let received: Vec<StatusField> = rx.into_iter().collect();
+        assert_eq!(
+            received.len(),
+            4,
+            "expected exactly 4 StatusField messages, got {}: {received:?}",
+            received.len()
+        );
+
+        let expected_variants: [StatusField; 4] = [
+            StatusField::Reachability(Vec::new()),
+            StatusField::ReachabilityV6(Vec::new()),
+            StatusField::Resolution(Vec::new()),
+            StatusField::DomainReachability(Vec::new()),
+        ];
+
+        let mut seen: HashSet<usize> = HashSet::new();
+        for field in &received {
+            let matched = expected_variants
+                .iter()
+                .position(|variant| discriminant(variant) == discriminant(field))
+                .unwrap_or_else(|| panic!("unexpected StatusField variant: {field:?}"));
+            assert!(
+                seen.insert(matched),
+                "StatusField variant sent more than once: {field:?}"
+            );
+        }
+        assert_eq!(
+            seen.len(),
+            expected_variants.len(),
+            "not every confidence-signal StatusField variant was sent"
         );
     }
 

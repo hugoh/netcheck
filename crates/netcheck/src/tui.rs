@@ -1,3 +1,4 @@
+use crate::watch::{self, CheckScope, WatchTrigger};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -12,11 +13,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use std::io::{self, Stdout};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
-
-const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Pads `text` to `width` columns with a single trailing separator space.
 /// The one place list-row column widths are defined, so a new/reordered
@@ -93,13 +92,22 @@ fn tabs_line(active: Tab) -> Line<'static> {
     Line::from(spans)
 }
 
-/// Runs one `collect_streaming` pass and forwards each field to `tx`, but
-/// only as long as `generation` still matches `this_gen` — if a newer run
-/// (manual or auto) has started in the meantime, this run's remaining
-/// fields are dropped instead of overwriting fresher data.
-fn run_and_forward(tx: &mpsc::Sender<StatusField>, generation: &Arc<AtomicU64>, this_gen: u64) {
+/// Runs one collection pass — full or confidence-only per `scope` (see
+/// `watch::CheckScope`) — and forwards each field to `tx`, but only as long
+/// as `generation` still matches `this_gen` — if a newer run (manual or
+/// auto) has started in the meantime, this run's remaining fields are
+/// dropped instead of overwriting fresher data.
+fn run_and_forward(
+    tx: &mpsc::Sender<StatusField>,
+    generation: &Arc<AtomicU64>,
+    this_gen: u64,
+    scope: CheckScope,
+) {
     let (inner_tx, inner_rx) = mpsc::channel();
-    std::thread::spawn(move || netstatus::collect_streaming(inner_tx));
+    std::thread::spawn(move || match scope {
+        CheckScope::Full => netstatus::collect_streaming(inner_tx),
+        CheckScope::ConfidenceOnly => netstatus::collect_confidence_streaming(inner_tx),
+    });
     for field in inner_rx {
         if generation.load(Ordering::SeqCst) == this_gen {
             let _ = tx.send(field);
@@ -107,12 +115,21 @@ fn run_and_forward(tx: &mpsc::Sender<StatusField>, generation: &Arc<AtomicU64>, 
     }
 }
 
-/// Spawns the background workers. Returns a receiver fed by both an initial
-/// one-shot collection, a periodic auto-refresh (gated by `auto_refresh`,
-/// off by default), and manual refreshes triggered via the returned sender.
-/// A shared generation counter ensures that if a manual and an auto-refresh
-/// run overlap, only the most recently started run's fields are merged.
-fn spawn_workers(auto_refresh: Arc<AtomicBool>) -> (mpsc::Receiver<StatusField>, mpsc::Sender<()>) {
+/// Spawns the background workers. Returns a receiver fed by manual refreshes
+/// triggered via the returned sender, and the smart-watch trigger
+/// (config-change notifications plus an adaptive-interval poll, both gated
+/// by `auto_refresh` and both feeding `health` back from the caller's
+/// confidence tracking) — no separate initial-fetch thread is needed since
+/// the trigger's own first fire while `auto_refresh` starts enabled is
+/// already `CheckScope::Full` (see `watch::spawn_watch_trigger`). A shared
+/// generation counter ensures that if multiple runs overlap, only the most
+/// recently started run's fields are merged. The returned `WatchTrigger`
+/// must be kept alive for the process lifetime — dropping it stops the
+/// watcher.
+fn spawn_workers(
+    auto_refresh: Arc<AtomicBool>,
+    health: Arc<AtomicU8>,
+) -> (mpsc::Receiver<StatusField>, mpsc::Sender<()>, WatchTrigger) {
     let (tx, rx) = mpsc::channel();
     let (manual_tx, manual_rx) = mpsc::channel::<()>();
     let generation = Arc::new(AtomicU64::new(0));
@@ -123,31 +140,23 @@ fn spawn_workers(auto_refresh: Arc<AtomicBool>) -> (mpsc::Receiver<StatusField>,
         std::thread::spawn(move || {
             for () in manual_rx {
                 let this_gen = generation.fetch_add(1, Ordering::SeqCst) + 1;
-                run_and_forward(&tx, &generation, this_gen);
+                run_and_forward(&tx, &generation, this_gen, CheckScope::Full);
             }
         });
     }
 
-    {
+    let fire = {
+        let tx = tx.clone();
         let generation = generation.clone();
-        std::thread::spawn(move || {
+        move |scope: CheckScope| {
             let this_gen = generation.fetch_add(1, Ordering::SeqCst) + 1;
-            run_and_forward(&tx, &generation, this_gen);
-            loop {
-                if auto_refresh.load(Ordering::Relaxed) {
-                    std::thread::sleep(REFRESH_INTERVAL);
-                    if auto_refresh.load(Ordering::Relaxed) {
-                        let this_gen = generation.fetch_add(1, Ordering::SeqCst) + 1;
-                        run_and_forward(&tx, &generation, this_gen);
-                    }
-                } else {
-                    std::thread::sleep(Duration::from_millis(200));
-                }
-            }
-        });
-    }
+            run_and_forward(&tx, &generation, this_gen, scope);
+        }
+    };
+    let trigger = watch::spawn_watch_trigger(auto_refresh, health, watch::Intervals::default(), fire)
+        .expect("failed to start config-change watcher");
 
-    (rx, manual_tx)
+    (rx, manual_tx, trigger)
 }
 
 fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
@@ -624,7 +633,7 @@ fn draw(
         let age = last_updated
             .map(|t| format!("updated {} ago", format_age(t.elapsed())))
             .unwrap_or_default();
-        let auto_state = if auto_refresh { "on, every 5s" } else { "off" };
+        let auto_state = if auto_refresh { "on" } else { "off" };
 
         let (confidence_text, confidence_color) = match status.confidence() {
             Some(netstatus::ConnectionConfidence::Online) => ("▲ Online", Color::Green),
@@ -654,8 +663,9 @@ fn draw(
 /// Runs the interactive dashboard until the user quits.
 pub fn run() -> io::Result<()> {
     let mut terminal = setup_terminal()?;
-    let auto_refresh = Arc::new(AtomicBool::new(false));
-    let (rx, manual_tx) = spawn_workers(auto_refresh.clone());
+    let auto_refresh = Arc::new(AtomicBool::new(true));
+    let health = Arc::new(AtomicU8::new(watch::HEALTHY));
+    let (rx, manual_tx, _trigger) = spawn_workers(auto_refresh.clone(), health.clone());
     let mut status = netstatus::PartialStatus::default();
     let mut last_updated: Option<Instant> = None;
     let mut active_tab = Tab::Overview;
@@ -665,6 +675,13 @@ pub fn run() -> io::Result<()> {
             while let Ok(field) = rx.try_recv() {
                 status.merge(field);
                 last_updated = Some(Instant::now());
+            }
+            if let Some(confidence) = status.confidence() {
+                let degraded = confidence == netstatus::ConnectionConfidence::Offline;
+                health.store(
+                    if degraded { watch::DEGRADED } else { watch::HEALTHY },
+                    Ordering::Relaxed,
+                );
             }
 
             draw(
