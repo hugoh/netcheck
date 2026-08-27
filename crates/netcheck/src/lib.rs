@@ -99,6 +99,23 @@ fn print_json<T: serde::Serialize>(value: &T) {
     );
 }
 
+/// Writes each field from `rx` to stdout as one NDJSON line, flushing after
+/// every line so a consumer piping this output sees each field as soon as
+/// it's ready instead of buffered. Shared by `stream` and `watch`, the two
+/// subcommands that print NDJSON instead of a single blocking snapshot.
+fn print_ndjson_stream(rx: std::sync::mpsc::Receiver<netstatus::StatusField>) {
+    use std::io::Write;
+    let mut stdout = std::io::stdout();
+    for field in rx {
+        let _ = writeln!(
+            stdout,
+            "{}",
+            serde_json::to_string(&field).expect("serializable status field")
+        );
+        let _ = stdout.flush();
+    }
+}
+
 /// Runs a JSON subcommand to completion, printing its result to stdout.
 pub fn run_command(command: Command) {
     match command {
@@ -108,24 +125,14 @@ pub fn run_command(command: Command) {
             SchemaTarget::WatchCommand => print_json(&netstatus::watch_command_schema()),
         },
         Command::Stream => {
-            use std::io::Write;
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || netstatus::collect_streaming(tx));
-            let mut stdout = std::io::stdout();
-            for field in rx {
-                let _ = writeln!(
-                    stdout,
-                    "{}",
-                    serde_json::to_string(&field).expect("serializable status field")
-                );
-                let _ = stdout.flush();
-            }
+            print_ndjson_stream(rx);
         }
         Command::Watch {
             interval,
             degraded_interval,
         } => {
-            use std::io::Write;
             use std::sync::Mutex;
             use std::sync::atomic::AtomicU64;
             let (tx, rx) = std::sync::mpsc::channel();
@@ -195,15 +202,7 @@ pub fn run_command(command: Command) {
                 let fire = fire.clone();
                 move |scope| fire(scope)
             });
-            let mut stdout = std::io::stdout();
-            for field in rx {
-                let _ = writeln!(
-                    stdout,
-                    "{}",
-                    serde_json::to_string(&field).expect("serializable status field")
-                );
-                let _ = stdout.flush();
-            }
+            print_ndjson_stream(rx);
         }
         Command::Interfaces => print_json(&netstatus::list_interfaces()),
         Command::Dns => print_json(&netstatus::list_resolvers()),
