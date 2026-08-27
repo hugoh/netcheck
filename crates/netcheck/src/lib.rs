@@ -31,7 +31,9 @@ pub enum Command {
     Stream,
     /// Like `stream`, but re-runs on every OS network-config change (and
     /// periodically as a safety net) instead of exiting after one pass —
-    /// runs until interrupted
+    /// runs until interrupted. Also reads `WatchCommand` lines from stdin
+    /// ("Refresh" triggers an immediate check) — see the README's wire
+    /// format section
     Watch {
         /// Poll interval in seconds while the connection looks healthy —
         /// the safety net for a failure that produces no OS config-change

@@ -154,15 +154,30 @@ Two things worth knowing about the shape:
   one message per target as soon as *that* target responds, instead of
   waiting for the slowest target in the group — so one unreachable host
   doesn't hold up the rest of the list from showing up:
+
   ```json
   {"Ping":{"group":"Reachability","result":{"target":"1.1.1.1","reachable":true,"rtt_ms":12.3}}}
   {"Ping":{"group":"Reachability","result":{"target":"8.8.8.8","reachable":true,"rtt_ms":9.1}}}
   {"GroupComplete":"Reachability"}
   ```
+
   `GroupComplete` marks a target list as fully drained; it's only sent for
   the four groups (`Resolution`, `Reachability`, `ReachabilityV6`,
   `DomainReachability`) that determine connection confidence, since that's
   the only place completeness (not just partial data) actually matters.
+
+`netcheck watch` is bidirectional: alongside the `StatusField` NDJSON it
+writes to stdout, it reads `WatchCommand` lines from stdin and acts on them
+immediately — currently just `"Refresh"` (a data-less enum variant's
+canonical JSON form is a bare string, not `{"Refresh":null}`), which runs a
+full check right away instead of waiting for the next config-change event
+or poll interval. This lets a caller that already has a `watch` process
+running trigger a manual refresh by writing one line to its stdin, rather
+than spawning a second concurrent `netcheck` process — deliberately so:
+running two of these against the same terminal/pipes concurrently is a real
+hazard (a `FileHandle.bytes.lines`-based reader deadlocks its second
+concurrent instance in the same process, which is exactly how the SwiftUI
+app used to trigger a manual refresh before this existed).
 
 The full shape is defined as [JSON Schema](schema/status-field.schema.json),
 generated straight from the Rust `StatusField` type via

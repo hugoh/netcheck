@@ -78,6 +78,13 @@ struct PartialNetworkStatus {
     /// tracked for the four groups `confidence` needs a completeness signal
     /// for (see `StatusFieldEnvelope.groupComplete`).
     var completedGroups: Set<ProbeGroup> = []
+    /// The `merge` generation each of those four groups most recently
+    /// completed at. Since a stdin-triggered refresh against an
+    /// already-running `watch` process has no "the process exited" signal
+    /// to mark it done (unlike the auto-refresh-off one-shot `stream`
+    /// fallback), `isRefreshComplete` uses this instead — the same
+    /// completeness signal `confidence` itself waits on.
+    private(set) var groupCompleteGeneration: [ProbeGroup: Int] = [:]
     /// The `merge` generation each reachability/resolution row last got a
     /// fresh value at, keyed by `"<group>:<target>"` — lets the UI show a
     /// spinner next to a specific row still waiting on the refresh in
@@ -99,6 +106,13 @@ struct PartialNetworkStatus {
     /// `"reachability:1.1.1.1"` or `"resolution:google.com"`.
     func isPending(_ key: String, asOf generation: Int) -> Bool {
         (rowGeneration[key] ?? -1) < generation
+    }
+
+    /// True once all four confidence-relevant groups have completed at or
+    /// after `generation` — see `groupCompleteGeneration`.
+    func isRefreshComplete(asOf generation: Int) -> Bool {
+        let requiredGroups: Set<ProbeGroup> = [.resolution, .reachability, .reachabilityV6, .domainReachability]
+        return requiredGroups.allSatisfy { (groupCompleteGeneration[$0] ?? -1) >= generation }
     }
 
     /// Replaces the entry in `list` matching `item` by `key`, or appends it
@@ -156,7 +170,10 @@ struct PartialNetworkStatus {
             Self.upsert(&resolution, &rowGeneration, v, key: { $0.domain },
                         rowKey: "resolution:\(v.domain)", generation: generation)
         }
-        if let g = envelope.groupComplete { completedGroups.insert(g) }
+        if let g = envelope.groupComplete {
+            completedGroups.insert(g)
+            groupCompleteGeneration[g] = generation
+        }
         if let v = envelope.proxy { proxy = v }
         if let v = envelope.wifiIdentity { wifiIdentity = v }
         if let v = envelope.wifiRadio { wifiRadio = v }

@@ -37,7 +37,12 @@ struct StatusFetcherRegressionTests {
         #expect(!fetcher.isRefreshing)
         #expect(fetcher.errorMessage == nil)
 
-        fetcher.toggleAutoRefresh() // stop the watch subprocess before returning
+        fetcher.toggleAutoRefresh() // cancels watchTask, which kills its subprocess
+        // ...but that teardown is asynchronous (Task cancellation is
+        // cooperative), and `swift test` doesn't wait around for it — give
+        // it a moment so this doesn't orphan a `netcheck watch` process on
+        // every test run.
+        try await Task.sleep(for: .milliseconds(200))
     }
 
     /// Mirrors `StatusFetcher.locateBinary()`'s own candidate paths exactly

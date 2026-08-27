@@ -43,13 +43,23 @@ final class StatusFetcher: ObservableObject {
     /// shouldn't visually interrupt the user for routine polling.
     @Published var isRefreshing = false
 
+    /// Only used as the auto-refresh-off fallback — a one-shot `netcheck
+    /// stream` process for a manual refresh, spawned when there's no
+    /// persistent `watch` process to signal instead. `nil` whenever
+    /// auto-refresh is on.
     private var refreshTask: Task<Void, Never>?
     /// Bumped on every manual refresh; used both to cancel a superseded
-    /// `refresh()` task and, via `PartialNetworkStatus.rowGeneration`, to
-    /// tell the view which reachability/resolution rows the in-progress
-    /// refresh hasn't updated yet (see `PartialNetworkStatus.isPending`).
+    /// fallback `refresh()` task and, via `PartialNetworkStatus.rowGeneration`
+    /// / `groupCompleteGeneration`, to tell the view which
+    /// reachability/resolution rows the in-progress refresh hasn't updated
+    /// yet (`PartialNetworkStatus.isPending`) and when it's fully done
+    /// (`PartialNetworkStatus.isRefreshComplete`).
     private(set) var refreshGeneration = 0
     private var watchTask: Task<Void, Never>?
+    /// stdin of the currently-running `watch` process, if any — `refresh()`
+    /// writes a `WatchCommand.refresh` line here instead of spawning a
+    /// second concurrent subprocess when this is non-nil.
+    private var watchStdin: FileHandle?
     private let binaryURL: URL?
     private var terminationObserver: NSObjectProtocol?
 
@@ -91,13 +101,17 @@ final class StatusFetcher: ObservableObject {
         } else {
             watchTask?.cancel()
             watchTask = nil
+            watchStdin = nil
         }
     }
 
     /// Starts the persistent `netcheck watch` subprocess and merges each
     /// NDJSON line it emits, for as long as auto-refresh stays on. Unlike
-    /// `refresh()`, this runs one long-lived process rather than restarting
-    /// on a timer — the Rust side owns the config-change/poll cadence.
+    /// the auto-refresh-off fallback in `refresh()`, this runs one
+    /// long-lived process rather than restarting on a timer — the Rust
+    /// side owns the config-change/poll cadence, and `refresh()` triggers
+    /// an immediate check by writing to this same process's stdin instead
+    /// of spawning a second one.
     private func startWatching() {
         guard let binaryURL else {
             errorMessage = "netcheck binary not found. Set NETCHECK_BIN, or build it with:\n" +
@@ -105,12 +119,14 @@ final class StatusFetcher: ObservableObject {
             return
         }
 
+        let (stream, stdin) = Self.streamLines(url: binaryURL, args: ["watch"])
+        watchStdin = stdin
         watchTask = Task {
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
 
             do {
-                for try await line in Self.streamLines(url: binaryURL, args: ["watch"]) {
+                for try await line in stream {
                     guard !line.isEmpty, let data = line.data(using: .utf8) else { continue }
                     guard let envelope = try? decoder.decode(StatusFieldEnvelope.self, from: data) else {
                         continue
@@ -118,12 +134,20 @@ final class StatusFetcher: ObservableObject {
                     status.merge(envelope, generation: refreshGeneration)
                     lastUpdated = Date()
                     errorMessage = nil
+                    // A stdin-triggered refresh has no "process exited"
+                    // completion signal the way the one-shot fallback does
+                    // — watch for the same confidence-readiness signal
+                    // `PartialNetworkStatus.confidence` itself waits on.
+                    if isRefreshing, status.isRefreshComplete(asOf: refreshGeneration) {
+                        isRefreshing = false
+                    }
                 }
             } catch is CancellationError {
                 // Auto-refresh was toggled off; nothing to report.
             } catch {
                 errorMessage = "Failed to run netcheck watch: \(error.localizedDescription)"
             }
+            watchStdin = nil
         }
     }
 
@@ -134,16 +158,31 @@ final class StatusFetcher: ObservableObject {
             return
         }
 
-        refreshTask?.cancel()
         refreshGeneration += 1
-        let generation = refreshGeneration
         isRefreshing = true
+
+        if let watchStdin {
+            // A `watch` process is already running — trigger it via stdin
+            // instead of spawning a second concurrent subprocess (real
+            // deadlock hazard, see streamLines' doc comment). Completion is
+            // detected in startWatching()'s own merge loop.
+            Self.send(.refresh, to: watchStdin)
+            return
+        }
+
+        // Auto-refresh is off — no persistent process to signal, so fall
+        // back to a one-shot `netcheck stream`, same as before this
+        // process became bidirectional. Safe by construction: nothing else
+        // reads a pipe concurrently while `watchTask`/`watchStdin` are nil.
+        refreshTask?.cancel()
+        let generation = refreshGeneration
+        let (stream, _) = Self.streamLines(url: binaryURL, args: ["stream"])
         refreshTask = Task {
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
 
             do {
-                for try await line in Self.streamLines(url: binaryURL, args: ["stream"]) {
+                for try await line in stream {
                     guard generation == refreshGeneration else { return }
                     guard !line.isEmpty, let data = line.data(using: .utf8) else { continue }
                     guard let envelope = try? decoder.decode(StatusFieldEnvelope.self, from: data) else {
@@ -165,8 +204,12 @@ final class StatusFetcher: ObservableObject {
         }
     }
 
-    /// Runs `netcheck stream`/`watch` and yields each line of its stdout as
-    /// it's written — no waiting for the process to exit, no blocking reads.
+    /// Runs `netcheck stream`/`watch`, yielding each line of its stdout as
+    /// it's written (no waiting for the process to exit, no blocking reads)
+    /// and returning a handle to write `WatchCommand` lines to its stdin —
+    /// only meaningful for `watch`, which reads and acts on them; `stream`
+    /// ignores stdin entirely, but there's no harm giving it a pipe nobody
+    /// writes to.
     ///
     /// Uses `FileHandle.readabilityHandler` + manual line-buffering rather
     /// than the more modern `FileHandle.bytes.lines` async sequence: with
@@ -176,14 +219,22 @@ final class StatusFetcher: ObservableObject {
     /// reader indefinitely (confirmed by a standalone repro: `stream`
     /// starts, `watch` is already running, `stream` never yields a single
     /// line or completes). `readabilityHandler` doesn't have this problem.
-    private nonisolated static func streamLines(url: URL, args: [String]) -> AsyncThrowingStream<String, Error> {
-        AsyncThrowingStream { continuation in
+    /// (This deadlock is exactly why manual refresh now prefers writing to
+    /// an already-running `watch` process's stdin over spawning a second
+    /// concurrent process at all — see `refresh()`.)
+    private nonisolated static func streamLines(
+        url: URL,
+        args: [String]
+    ) -> (stream: AsyncThrowingStream<String, Error>, stdin: FileHandle) {
+        let inPipe = Pipe()
+        let stream = AsyncThrowingStream<String, Error> { continuation in
             let process = Process()
             process.executableURL = url
             process.arguments = args
             let outPipe = Pipe()
             process.standardOutput = outPipe
             process.standardError = Pipe()
+            process.standardInput = inPipe
 
             let buffer = LineBuffer()
             outPipe.fileHandleForReading.readabilityHandler = { handle in
@@ -213,6 +264,17 @@ final class StatusFetcher: ObservableObject {
                 if process.isRunning { process.terminate() }
             }
         }
+        return (stream, inPipe.fileHandleForWriting)
+    }
+
+    /// JSON-encodes `command` as a single NDJSON line and writes it to
+    /// `stdin`. Errors are swallowed (matches the fire-and-forget nature of
+    /// `WatchCommand`: if this write is lost, the next manual refresh or
+    /// the periodic poll recovers).
+    private static func send(_ command: WatchCommand, to stdin: FileHandle) {
+        guard var data = try? JSONEncoder().encode(command) else { return }
+        data.append(UInt8(ascii: "\n"))
+        try? stdin.write(contentsOf: data)
     }
 
     private static func locateBinary() -> URL? {

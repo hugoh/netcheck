@@ -1,5 +1,14 @@
 import Foundation
 
+/// A command sent as NDJSON on `netcheck watch`'s stdin, one per line —
+/// mirrors Rust's `netstatus::status::WatchCommand`. Encodes as the bare
+/// string `"Refresh"`: serde's canonical JSON form for a data-less enum
+/// variant (confirmed against the real Rust type, not guessed — see
+/// `WatchCommandTests`).
+enum WatchCommand: String, Encodable {
+    case refresh = "Refresh"
+}
+
 struct NetInterface: Codable, Identifiable {
     var id: String { name }
     let name: String
