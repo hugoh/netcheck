@@ -1,0 +1,37 @@
+#!/usr/bin/env perl
+# Deterministic stand-in for `netcheck watch` — emits canned StreamEvent
+# NDJSON and echoes a RefreshToken command's token back in a fresh
+# CheckStarted, so StatusFetcher's wire-protocol handling can be tested
+# without the real binary or the network. `$| = 1` keeps stdout unbuffered
+# so each line reaches the reader immediately.
+use strict;
+use warnings;
+$| = 1;
+
+sub emit_check {
+    my ($gen, $trigger, $token) = @_;
+    my $tok = defined($token) ? "\"$token\"" : "null";
+    print "{\"CheckStarted\":{\"generation\":$gen,\"scope\":\"full\",\"trigger\":\"$trigger\",\"token\":$tok}}\n";
+    print "{\"Field\":{\"generation\":$gen,\"field\":{\"SplitDns\":false}}}\n";
+    for my $group (qw(Resolution Reachability ReachabilityV6 DomainReachability)) {
+        print "{\"Field\":{\"generation\":$gen,\"field\":{\"GroupComplete\":\"$group\"}}}\n";
+    }
+    print "{\"Field\":{\"generation\":$gen,\"field\":{\"CaptivePortal\":\"Clear\"}}}\n";
+    print "{\"CheckComplete\":{\"generation\":$gen}}\n";
+}
+
+print "{\"Hello\":{\"protocol_version\":1,\"config_watcher\":\"active\",\"healthy_interval_secs\":60,\"degraded_interval_secs\":10}}\n";
+
+my $gen = 1;
+emit_check($gen, "initial", undef);
+
+while (my $line = <STDIN>) {
+    chomp $line;
+    if ($line =~ /RefreshToken/) {
+        my ($token) = $line =~ /"token":"([^"]*)"/;
+        $gen++;
+        emit_check($gen, "command", $token);
+    } elsif (length $line) {
+        print "{\"Error\":{\"message\":\"unrecognized command\",\"fatal\":false}}\n";
+    }
+}

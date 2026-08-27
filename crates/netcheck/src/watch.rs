@@ -3,10 +3,10 @@
 //! backed by an adaptive-interval poll as a safety net for failures that
 //! produce no config-change event at all (e.g. a blackholed route).
 
-use netstatus::StatusField;
+use netstatus::{StatusField, Trigger, WatcherState};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// How often the poll thread re-checks `enabled` while idle (matches the
@@ -50,14 +50,25 @@ pub enum CheckScope {
     ConfidenceOnly,
 }
 
+impl From<CheckScope> for netstatus::Scope {
+    fn from(scope: CheckScope) -> Self {
+        match scope {
+            CheckScope::Full => netstatus::Scope::Full,
+            CheckScope::ConfidenceOnly => netstatus::Scope::Confidence,
+        }
+    }
+}
+
 /// Runs one collection pass — full or confidence-only per `scope` — calling
 /// `on_field` for every field as it arrives (e.g. to fold it into a running
-/// `PartialStatus`) and then forwarding it to `tx`, but only as long as
+/// `PartialStatus`) and then passing it to `forward`, but only as long as
 /// `generation` still matches `this_gen` — if a newer run (manual or auto)
-/// has started in the meantime, this run's remaining fields are dropped
-/// from `tx` instead of overwriting fresher data. `on_field` always sees
+/// has started in the meantime, this run's remaining fields are not
+/// forwarded, instead of overwriting fresher data. `on_field` always sees
 /// every field regardless of generation, since a stale run's data is still
 /// the most recent thing known until a newer run's fields replace it.
+/// `forward` is where the caller sends downstream — a raw `StatusField` for
+/// the TUI's channel, a `StreamEvent::Field` wrapper for the CLI's wire.
 ///
 /// Shared by the CLI `watch` subcommand and the TUI's auto-refresh, which
 /// both run this same fire/generation-guard dance but differ in what they
@@ -65,11 +76,11 @@ pub enum CheckScope {
 /// `health`; the TUI merges it into the screen's own `PartialStatus` in its
 /// render loop instead).
 pub fn run_and_forward(
-    tx: &mpsc::Sender<StatusField>,
     generation: &Arc<AtomicU64>,
     this_gen: u64,
     scope: CheckScope,
     mut on_field: impl FnMut(&StatusField),
+    mut forward: impl FnMut(StatusField),
 ) {
     let (inner_tx, inner_rx) = mpsc::channel();
     std::thread::spawn(move || match scope {
@@ -79,7 +90,102 @@ pub fn run_and_forward(
     for field in inner_rx {
         on_field(&field);
         if generation.load(Ordering::SeqCst) == this_gen {
-            let _ = tx.send(field);
+            forward(field);
+        }
+    }
+}
+
+/// One coalesced request queued behind an in-flight collection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingFire {
+    pub scope: CheckScope,
+    pub trigger: Trigger,
+    pub token: Option<String>,
+}
+
+/// Merge a newly-requested fire into whatever is already queued behind the
+/// in-flight one. Scope escalates to `Full` if either side is `Full`; a
+/// `Command` fire wins the trigger/token slot (so a manual refresh that
+/// lands mid-check still gets its `CheckStarted` token echoed), otherwise
+/// the newer request wins.
+fn coalesce(pending: Option<PendingFire>, incoming: PendingFire) -> PendingFire {
+    let Some(pending) = pending else {
+        return incoming;
+    };
+    let scope = if pending.scope == CheckScope::Full || incoming.scope == CheckScope::Full {
+        CheckScope::Full
+    } else {
+        CheckScope::ConfidenceOnly
+    };
+    let (trigger, token) = if incoming.trigger == Trigger::Command {
+        (incoming.trigger, incoming.token)
+    } else if pending.trigger == Trigger::Command {
+        (pending.trigger, pending.token)
+    } else {
+        (incoming.trigger, incoming.token)
+    };
+    PendingFire {
+        scope,
+        trigger,
+        token,
+    }
+}
+
+struct SingleFlightState {
+    in_flight: bool,
+    pending: Option<PendingFire>,
+}
+
+/// Serializes the three `fire` callers (config-change watcher, poll thread,
+/// stdin command thread) onto one collection at a time. A request that
+/// arrives while a collection is running is coalesced into a single
+/// follow-up (see `coalesce`) rather than launching a concurrent
+/// `collect_streaming` — which would waste probes and race the caller's
+/// post-run `health` write.
+pub struct SingleFlight<F> {
+    raw: F,
+    state: Mutex<SingleFlightState>,
+}
+
+impl<F: Fn(CheckScope, Trigger, Option<String>)> SingleFlight<F> {
+    pub fn new(raw: F) -> Self {
+        SingleFlight {
+            raw,
+            state: Mutex::new(SingleFlightState {
+                in_flight: false,
+                pending: None,
+            }),
+        }
+    }
+
+    pub fn fire(&self, scope: CheckScope, trigger: Trigger, token: Option<String>) {
+        let incoming = PendingFire {
+            scope,
+            trigger,
+            token,
+        };
+        {
+            let mut state = self.state.lock().unwrap();
+            if state.in_flight {
+                state.pending = Some(coalesce(state.pending.take(), incoming));
+                return;
+            }
+            state.in_flight = true;
+        }
+        let mut current = incoming;
+        loop {
+            (self.raw)(current.scope, current.trigger, current.token);
+            let mut state = self.state.lock().unwrap();
+            match state.pending.take() {
+                Some(next) => {
+                    drop(state);
+                    current = next;
+                }
+                None => {
+                    state.in_flight = false;
+                    return;
+                }
+            }
         }
     }
 }
@@ -126,8 +232,14 @@ fn scope_for_poll_tick(was_enabled: bool, is_enabled: bool) -> Option<CheckScope
 ///
 /// If the config-change watcher fails to start (e.g. `SCDynamicStore` setup
 /// rejected in a sandboxed environment), this doesn't fail outright — it
-/// still returns a `WatchTrigger` running the poll thread alone, so `watch`
-/// degrades to poll-only instead of refusing to run at all.
+/// still returns a `WatchTrigger` running the poll thread alone (and a
+/// `WatcherState::Unavailable` for the caller to report in `Hello`), so
+/// `watch` degrades to poll-only instead of refusing to run at all.
+///
+/// `fire` is called with the check's `scope`, the `Trigger` that caused it
+/// (`ConfigChange` from the watcher; `Initial` for the poll thread's first
+/// fire after becoming enabled, `Poll` thereafter), and no token (only a
+/// stdin `WatchCommand` carries one).
 ///
 /// `health` is written by the caller after each check completes (`HEALTHY`
 /// or `DEGRADED`, from the latest `ConnectionConfidence`) and read here to
@@ -136,8 +248,8 @@ pub fn spawn_watch_trigger(
     enabled: Arc<AtomicBool>,
     health: Arc<AtomicU8>,
     intervals: Intervals,
-    fire: impl Fn(CheckScope) + Send + Sync + 'static,
-) -> WatchTrigger {
+    fire: impl Fn(CheckScope, Trigger, Option<String>) + Send + Sync + 'static,
+) -> (WatchTrigger, WatcherState) {
     let fire = Arc::new(fire);
 
     let sc_handle = {
@@ -145,13 +257,18 @@ pub fn spawn_watch_trigger(
         let fire = fire.clone();
         netstatus::watch_config_changes(move || {
             if enabled.load(Ordering::Relaxed) {
-                fire(CheckScope::Full);
+                fire(CheckScope::Full, Trigger::ConfigChange, None);
             }
         })
         .inspect_err(|err| {
             eprintln!("netcheck: config-change watcher unavailable, falling back to poll-only: {err}");
         })
         .ok()
+    };
+    let watcher_state = if sc_handle.is_some() {
+        WatcherState::Active
+    } else {
+        WatcherState::Unavailable
     };
 
     let poll_thread = std::thread::spawn(move || {
@@ -166,7 +283,12 @@ pub fn spawn_watch_trigger(
             let is_enabled = enabled.load(Ordering::Relaxed);
             match scope_for_poll_tick(was_enabled, is_enabled) {
                 Some(scope) => {
-                    fire(scope);
+                    let trigger = if was_enabled {
+                        Trigger::Poll
+                    } else {
+                        Trigger::Initial
+                    };
+                    fire(scope, trigger, None);
                     std::thread::sleep(interval_for(intervals, health.load(Ordering::Relaxed)));
                 }
                 None => std::thread::sleep(IDLE_POLL_INTERVAL),
@@ -175,10 +297,13 @@ pub fn spawn_watch_trigger(
         }
     });
 
-    WatchTrigger {
-        _sc_handle: sc_handle,
-        _poll_thread: poll_thread,
-    }
+    (
+        WatchTrigger {
+            _sc_handle: sc_handle,
+            _poll_thread: poll_thread,
+        },
+        watcher_state,
+    )
 }
 
 #[cfg(test)]
@@ -196,6 +321,59 @@ mod tests {
             scope_for_poll_tick(true, true),
             Some(CheckScope::ConfidenceOnly)
         );
+    }
+
+    fn pending(scope: CheckScope, trigger: Trigger, token: Option<&str>) -> PendingFire {
+        PendingFire {
+            scope,
+            trigger,
+            token: token.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn coalesce_with_nothing_queued_keeps_the_incoming_request() {
+        let incoming = pending(CheckScope::ConfidenceOnly, Trigger::Poll, None);
+        assert_eq!(coalesce(None, incoming.clone()), incoming);
+    }
+
+    #[test]
+    fn coalesce_escalates_scope_to_full_if_either_side_is_full() {
+        let got = coalesce(
+            Some(pending(CheckScope::Full, Trigger::ConfigChange, None)),
+            pending(CheckScope::ConfidenceOnly, Trigger::Poll, None),
+        );
+        assert_eq!(got.scope, CheckScope::Full);
+    }
+
+    #[test]
+    fn coalesce_keeps_a_command_token_over_a_poll_or_config_fire() {
+        // Manual refresh queued, then a poll fire lands behind it: the
+        // follow-up must still carry the caller's token so the client's
+        // CheckStarted correlation holds.
+        let got = coalesce(
+            Some(pending(CheckScope::Full, Trigger::Command, Some("t1"))),
+            pending(CheckScope::ConfidenceOnly, Trigger::Poll, None),
+        );
+        assert_eq!(got.trigger, Trigger::Command);
+        assert_eq!(got.token.as_deref(), Some("t1"));
+
+        // ...and the same the other way round (poll queued, command lands).
+        let got = coalesce(
+            Some(pending(CheckScope::ConfidenceOnly, Trigger::Poll, None)),
+            pending(CheckScope::Full, Trigger::Command, Some("t2")),
+        );
+        assert_eq!(got.trigger, Trigger::Command);
+        assert_eq!(got.token.as_deref(), Some("t2"));
+    }
+
+    #[test]
+    fn coalesce_between_two_non_command_fires_takes_the_newer() {
+        let got = coalesce(
+            Some(pending(CheckScope::ConfidenceOnly, Trigger::Poll, None)),
+            pending(CheckScope::ConfidenceOnly, Trigger::ConfigChange, None),
+        );
+        assert_eq!(got.trigger, Trigger::ConfigChange);
     }
 
     #[test]

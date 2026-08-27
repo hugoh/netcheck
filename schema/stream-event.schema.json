@@ -1,0 +1,871 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StreamEvent",
+  "description": "One line of the `stream`/`watch` stdout wire protocol (v1). Every\n`StatusField` result is wrapped in `Field` and carries the monotonic\n`generation` of the check that produced it; each check is bracketed by\n`CheckStarted`/`CheckComplete` with the same generation; `watch`\nadditionally emits `Heartbeat` for liveness and `Error` for a bad stdin\ncommand or a probe failure. Every run's first line is `Hello`.",
+  "oneOf": [
+    {
+      "title": "Hello",
+      "description": "First line of every `stream`/`watch` run — declares the protocol\nversion and (for `watch`) whether the config-change watcher started.",
+      "type": "object",
+      "properties": {
+        "Hello": {
+          "type": "object",
+          "properties": {
+            "config_watcher": {
+              "$ref": "#/$defs/WatcherState"
+            },
+            "degraded_interval_secs": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "healthy_interval_secs": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "protocol_version": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "protocol_version",
+            "config_watcher",
+            "healthy_interval_secs",
+            "degraded_interval_secs"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "Hello"
+      ]
+    },
+    {
+      "title": "CheckStarted",
+      "description": "A check has begun; every following `Field` at this `generation`\nbelongs to it, until the matching `CheckComplete`.",
+      "type": "object",
+      "properties": {
+        "CheckStarted": {
+          "type": "object",
+          "properties": {
+            "generation": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "scope": {
+              "$ref": "#/$defs/Scope"
+            },
+            "token": {
+              "description": "Echoed from `WatchCommand::RefreshToken`; `None` for any\nnon-command-triggered check.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "trigger": {
+              "$ref": "#/$defs/Trigger"
+            }
+          },
+          "required": [
+            "generation",
+            "scope",
+            "trigger"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "CheckStarted"
+      ]
+    },
+    {
+      "title": "Field",
+      "description": "One probe result, tagged with its check's `generation`.",
+      "type": "object",
+      "properties": {
+        "Field": {
+          "type": "object",
+          "properties": {
+            "field": {
+              "$ref": "#/$defs/StatusField"
+            },
+            "generation": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "generation",
+            "field"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "Field"
+      ]
+    },
+    {
+      "title": "CheckComplete",
+      "description": "The check at this `generation` has finished (or been superseded —\neither way its `Field` lines will not continue).",
+      "type": "object",
+      "properties": {
+        "CheckComplete": {
+          "type": "object",
+          "properties": {
+            "generation": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "generation"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "CheckComplete"
+      ]
+    },
+    {
+      "title": "Heartbeat",
+      "description": "`watch`-only liveness marker, emitted on a fixed cadence regardless\nof check activity.",
+      "type": "object",
+      "properties": {
+        "Heartbeat": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "Heartbeat"
+      ]
+    },
+    {
+      "title": "Error",
+      "description": "A recoverable problem (`fatal: false` — e.g. an unrecognized stdin\ncommand) or a terminal one (`fatal: true`).",
+      "type": "object",
+      "properties": {
+        "Error": {
+          "type": "object",
+          "properties": {
+            "fatal": {
+              "type": "boolean"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message",
+            "fatal"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "Error"
+      ]
+    }
+  ],
+  "$defs": {
+    "CaptivePortalStatus": {
+      "description": "Whether something between this machine and the internet is\nintercepting plain HTTP traffic to serve a login page (a captive\nportal), determined by fetching Apple's own hotspot-detect endpoint —\nthe same check macOS itself uses.",
+      "oneOf": [
+        {
+          "title": "Clear",
+          "description": "The hotspot-detect request got the expected response — nothing is\nintercepting traffic.",
+          "type": "string",
+          "const": "Clear"
+        },
+        {
+          "title": "Detected",
+          "description": "The response was rewritten, redirected, or otherwise not what was\nexpected — something between this machine and the internet is\nintercepting the request.",
+          "type": "string",
+          "const": "Detected"
+        },
+        {
+          "title": "Unknown",
+          "description": "The probe didn't get a conclusive answer (e.g. the request itself\nfailed) — not evidence of a portal, just an inconclusive check.",
+          "type": "string",
+          "const": "Unknown"
+        }
+      ]
+    },
+    "ConnectResult": {
+      "description": "Result of a single TCP connect probe against a target host and port.",
+      "type": "object",
+      "properties": {
+        "port": {
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "reachable": {
+          "type": "boolean"
+        },
+        "rtt_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "port",
+        "reachable"
+      ]
+    },
+    "Interface": {
+      "description": "Observable status of a single network interface.",
+      "type": "object",
+      "properties": {
+        "addresses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "loopback": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "up": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "up",
+        "loopback",
+        "addresses"
+      ]
+    },
+    "IpStack": {
+      "oneOf": [
+        {
+          "title": "Ipv4Only",
+          "description": "A routable IPv4 address, but no routable IPv6 address.",
+          "type": "string",
+          "const": "Ipv4Only"
+        },
+        {
+          "title": "Ipv6Only",
+          "description": "A routable IPv6 address, but no routable IPv4 address.",
+          "type": "string",
+          "const": "Ipv6Only"
+        },
+        {
+          "title": "DualStack",
+          "description": "A routable address in both families.",
+          "type": "string",
+          "const": "DualStack"
+        },
+        {
+          "title": "None",
+          "description": "No routable address in either family (link-local only, or no\naddress at all).",
+          "type": "string",
+          "const": "None"
+        }
+      ]
+    },
+    "PingResult": {
+      "description": "Result of a single ping probe against a target host.",
+      "type": "object",
+      "properties": {
+        "reachable": {
+          "type": "boolean"
+        },
+        "rtt_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "reachable"
+      ]
+    },
+    "ProbeGroup": {
+      "description": "Which target list a streamed `Ping`/`Connect` item, or a `GroupComplete`\nmarker, belongs to.",
+      "oneOf": [
+        {
+          "title": "Reachability",
+          "description": "ICMP reachability of well-known public IPv4 anycast DNS resolvers\n(see `DEFAULT_PING_TARGETS`).",
+          "type": "string",
+          "const": "Reachability"
+        },
+        {
+          "title": "ReachabilityV6",
+          "description": "Same as `Reachability`, but IPv6 targets (see\n`DEFAULT_PING_TARGETS_V6`).",
+          "type": "string",
+          "const": "ReachabilityV6"
+        },
+        {
+          "title": "GatewayReachability",
+          "description": "ICMP reachability of the default gateway's IP(s) — a LAN-hop\nsignal, distinct from `Reachability`'s public anycast targets:\nunreachable here alongside unreachable public targets points at the\nlocal link rather than the ISP or upstream.",
+          "type": "string",
+          "const": "GatewayReachability"
+        },
+        {
+          "title": "NameserverReachability",
+          "description": "ICMP reachability of each configured resolver's IP, probed directly\nrather than inferred from whether name resolution succeeds.",
+          "type": "string",
+          "const": "NameserverReachability"
+        },
+        {
+          "title": "DomainReachability",
+          "description": "TCP connect (port 443) reachability of well-known domains (see\n`DEFAULT_RESOLUTION_TARGETS`) — a real connect rather than ICMP\nping, since some large operators filter ICMP at their edge\nregardless of whether the service itself is up.",
+          "type": "string",
+          "const": "DomainReachability"
+        },
+        {
+          "title": "NameserverConnect",
+          "description": "TCP connect (port 53) reachability of each configured resolver's\nIP. Like `DomainReachability`, this catches resolvers that filter\nICMP but still serve queries.",
+          "type": "string",
+          "const": "NameserverConnect"
+        },
+        {
+          "title": "Resolution",
+          "description": "DNS resolution of well-known domains (see\n`DEFAULT_RESOLUTION_TARGETS`).",
+          "type": "string",
+          "const": "Resolution"
+        }
+      ]
+    },
+    "ProxyConfig": {
+      "type": "object",
+      "properties": {
+        "exceptions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "http": {
+          "$ref": "#/$defs/ProxyEndpoint"
+        },
+        "https": {
+          "$ref": "#/$defs/ProxyEndpoint"
+        },
+        "pac_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "socks": {
+          "$ref": "#/$defs/ProxyEndpoint"
+        }
+      },
+      "required": [
+        "http",
+        "https",
+        "socks",
+        "exceptions"
+      ]
+    },
+    "ProxyEndpoint": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "host": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "port": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "enabled"
+      ]
+    },
+    "ResolutionResult": {
+      "description": "Result of resolving a single domain name.",
+      "type": "object",
+      "properties": {
+        "addresses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "domain": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "resolved": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "domain",
+        "resolved",
+        "addresses"
+      ]
+    },
+    "Resolver": {
+      "description": "A single resolver configuration, one per network service.",
+      "type": "object",
+      "properties": {
+        "domain": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "if_index": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "if_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nameservers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reachable": {
+          "type": "boolean"
+        },
+        "scoped": {
+          "type": "boolean"
+        },
+        "search_domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "search_domains",
+        "nameservers",
+        "scoped",
+        "reachable"
+      ]
+    },
+    "Scope": {
+      "description": "How much of a check `StreamEvent::CheckStarted` is announcing — the wire\nmirror of the CLI-internal `CheckScope`. `Full` re-probes everything;\n`Confidence` runs only the confidence-determining probes (a poll-tick\nsafety-net check).",
+      "oneOf": [
+        {
+          "title": "full",
+          "type": "string",
+          "const": "full"
+        },
+        {
+          "title": "confidence",
+          "type": "string",
+          "const": "confidence"
+        }
+      ]
+    },
+    "StatusField": {
+      "description": "One probe's result, delivered as soon as that probe completes. For a\ntarget-list probe (`Ping`/`Connect`/`Resolution`), that's per-target, not\nper-group — a slow or unreachable target no longer holds up the rest of\nits list from being visible (see `for_each_concurrent`). `GroupComplete`\nmarks a target list as fully drained; only sent for the four groups\n`PartialStatus::confidence` needs a completeness signal for.",
+      "oneOf": [
+        {
+          "title": "Interfaces",
+          "description": "The current network interfaces.",
+          "type": "object",
+          "properties": {
+            "Interfaces": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Interface"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Interfaces"
+          ]
+        },
+        {
+          "title": "Vpn",
+          "description": "VPN/tunnel status derived from the interface list and the primary\n(default-route) interface.",
+          "type": "object",
+          "properties": {
+            "Vpn": {
+              "$ref": "#/$defs/VpnStatus"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Vpn"
+          ]
+        },
+        {
+          "title": "Resolvers",
+          "description": "Every DNS resolver macOS knows about, including scoped\n(per-interface) resolvers.",
+          "type": "object",
+          "properties": {
+            "Resolvers": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Resolver"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Resolvers"
+          ]
+        },
+        {
+          "title": "SplitDns",
+          "description": "Whether any resolver is scoped to a specific interface — the\nmechanism VPN clients like Cisco AnyConnect use for split-DNS.",
+          "type": "object",
+          "properties": {
+            "SplitDns": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "SplitDns"
+          ]
+        },
+        {
+          "title": "Ping",
+          "description": "One target's ICMP ping result, for the given `group`.",
+          "type": "object",
+          "properties": {
+            "Ping": {
+              "type": "object",
+              "properties": {
+                "group": {
+                  "$ref": "#/$defs/ProbeGroup"
+                },
+                "result": {
+                  "$ref": "#/$defs/PingResult"
+                }
+              },
+              "required": [
+                "group",
+                "result"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Ping"
+          ]
+        },
+        {
+          "title": "Connect",
+          "description": "One target's TCP connect result, for the given `group`.",
+          "type": "object",
+          "properties": {
+            "Connect": {
+              "type": "object",
+              "properties": {
+                "group": {
+                  "$ref": "#/$defs/ProbeGroup"
+                },
+                "result": {
+                  "$ref": "#/$defs/ConnectResult"
+                }
+              },
+              "required": [
+                "group",
+                "result"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Connect"
+          ]
+        },
+        {
+          "title": "Resolution",
+          "description": "One domain's DNS resolution result (always `ProbeGroup::Resolution`\n— the only resolution group — so unlike `Ping`/`Connect` this isn't\ntagged with one).",
+          "type": "object",
+          "properties": {
+            "Resolution": {
+              "$ref": "#/$defs/ResolutionResult"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Resolution"
+          ]
+        },
+        {
+          "title": "GroupComplete",
+          "description": "`group`'s target list has fully drained — every target in it has\nsent its `Ping`/`Connect`/`Resolution` result at least once.",
+          "type": "object",
+          "properties": {
+            "GroupComplete": {
+              "$ref": "#/$defs/ProbeGroup"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "GroupComplete"
+          ]
+        },
+        {
+          "title": "Proxy",
+          "description": "The system's configured HTTP/HTTPS/SOCKS/PAC proxy settings.",
+          "type": "object",
+          "properties": {
+            "Proxy": {
+              "$ref": "#/$defs/ProxyConfig"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Proxy"
+          ]
+        },
+        {
+          "title": "WifiIdentity",
+          "description": "SSID/connected-state — the slow half of Wi-Fi status\n(`system_profiler`-backed).",
+          "type": "object",
+          "properties": {
+            "WifiIdentity": {
+              "$ref": "#/$defs/WifiIdentity"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "WifiIdentity"
+          ]
+        },
+        {
+          "title": "WifiRadio",
+          "description": "Channel/signal/noise/security/PHY-mode — the fast half of Wi-Fi\nstatus (CoreWLAN-backed, no shell-out).",
+          "type": "object",
+          "properties": {
+            "WifiRadio": {
+              "$ref": "#/$defs/WifiRadio"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "WifiRadio"
+          ]
+        },
+        {
+          "title": "IpStack",
+          "description": "Whether the machine has a routable IPv4 address, IPv6 address,\nboth, or neither.",
+          "type": "object",
+          "properties": {
+            "IpStack": {
+              "$ref": "#/$defs/IpStack"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "IpStack"
+          ]
+        },
+        {
+          "title": "CaptivePortal",
+          "description": "Whether a captive portal was detected.",
+          "type": "object",
+          "properties": {
+            "CaptivePortal": {
+              "$ref": "#/$defs/CaptivePortalStatus"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "CaptivePortal"
+          ]
+        }
+      ]
+    },
+    "Trigger": {
+      "description": "Why a check started, carried by `StreamEvent::CheckStarted`.",
+      "oneOf": [
+        {
+          "title": "initial",
+          "description": "The first check of a `stream`/`watch` run.",
+          "type": "string",
+          "const": "initial"
+        },
+        {
+          "title": "config_change",
+          "description": "An OS network-config change (interface up/down, IP/DNS reconfig, VPN).",
+          "type": "string",
+          "const": "config_change"
+        },
+        {
+          "title": "poll",
+          "description": "The adaptive-interval poll safety net.",
+          "type": "string",
+          "const": "poll"
+        },
+        {
+          "title": "command",
+          "description": "A `WatchCommand` read from stdin.",
+          "type": "string",
+          "const": "command"
+        }
+      ]
+    },
+    "VpnStatus": {
+      "description": "VPN / tunnel status derived from the interface list and the primary\n(default-route) interface.",
+      "type": "object",
+      "properties": {
+        "connected": {
+          "type": "boolean"
+        },
+        "primary_interface": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "routed_subnets": {
+          "description": "Subnets routed through the VPN (its own assigned address/subnet,\nplus any additional split-tunnel destinations it pushes), formatted\nas CIDR strings. Empty when not connected, or when the dynamic\nstore's per-service IPv4 dict for the tunnel interface carries no\n`AdditionalRoutes` — a full-tunnel VPN commonly has none, since it\nbecomes the default route (`OverridePrimary`) instead of pushing a\ndiscrete route list.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "split_tunnel": {
+          "type": "boolean"
+        },
+        "tunnels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "tunnels",
+        "connected",
+        "split_tunnel",
+        "routed_subnets"
+      ]
+    },
+    "WatcherState": {
+      "description": "Whether the OS config-change watcher started, reported by\n`StreamEvent::Hello`. `Unavailable` means `watch` degraded to poll-only\n(e.g. `SCDynamicStore` setup rejected in a sandbox).",
+      "oneOf": [
+        {
+          "title": "active",
+          "type": "string",
+          "const": "active"
+        },
+        {
+          "title": "unavailable",
+          "type": "string",
+          "const": "unavailable"
+        },
+        {
+          "title": "disabled",
+          "description": "No config-change watcher is run at all — the one-shot `stream`\nsubcommand, which does a single pass and exits.",
+          "type": "string",
+          "const": "disabled"
+        }
+      ]
+    },
+    "WifiIdentity": {
+      "description": "SSID/connected-state, the slow half of Wi-Fi status — only obtainable via\n`system_profiler` (a ~1s shell-out), since reading it through CoreWLAN\nneeds Location Services authorization a bare CLI/TUI binary can't get.",
+      "type": "object",
+      "properties": {
+        "connected": {
+          "type": "boolean"
+        },
+        "ssid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "connected"
+      ]
+    },
+    "WifiRadio": {
+      "description": "Channel/signal/noise/security/PHY-mode, the fast half of Wi-Fi status —\nread straight from CoreWLAN (`CWWiFiClient`/`CWInterface`), no shell-out.",
+      "type": "object",
+      "properties": {
+        "channel": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "noise_dbm": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "phy_mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "security": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "signal_dbm": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        }
+      }
+    }
+  }
+}

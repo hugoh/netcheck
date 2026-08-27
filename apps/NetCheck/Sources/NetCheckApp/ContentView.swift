@@ -194,7 +194,10 @@ struct ContentView: View {
     /// collecting/empty state instead until the first refresh actually
     /// starts.
     private func isPending(_ key: String) -> Bool {
-        fetcher.isRefreshing && fetcher.status.isPending(key, asOf: fetcher.refreshGeneration)
+        guard fetcher.isRefreshing, let generation = fetcher.pendingRefreshGeneration else {
+            return false
+        }
+        return fetcher.status.isPending(key, asOf: generation)
     }
 
     @ViewBuilder

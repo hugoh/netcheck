@@ -284,11 +284,66 @@ pub enum ProbeGroup {
 /// `watch` running at all already means auto-refresh is enabled — there's
 /// no separate enable/disable command, just "trigger a check now" for a
 /// process the caller already knows is running.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, schemars::JsonSchema)]
 pub enum WatchCommand {
-    /// Run a full check immediately, same as a config-change fire.
+    /// Run a full check immediately, same as a config-change fire. Canonical
+    /// wire form is the bare string `"Refresh"`.
     #[schemars(title = "Refresh")]
     Refresh,
+    /// Same as `Refresh`, but carries a caller-chosen correlation `token`
+    /// that the resulting `StreamEvent::CheckStarted` echoes back, so a
+    /// client can tell which check its own request produced (vs. a
+    /// concurrent poll/config-change fire). Wire form
+    /// `{"RefreshToken":{"token":"…"}}`.
+    #[schemars(title = "RefreshToken")]
+    RefreshToken { token: String },
+}
+
+/// How much of a check `StreamEvent::CheckStarted` is announcing — the wire
+/// mirror of the CLI-internal `CheckScope`. `Full` re-probes everything;
+/// `Confidence` runs only the confidence-determining probes (a poll-tick
+/// safety-net check).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Scope {
+    #[schemars(title = "full")]
+    Full,
+    #[schemars(title = "confidence")]
+    Confidence,
+}
+
+/// Why a check started, carried by `StreamEvent::CheckStarted`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Trigger {
+    /// The first check of a `stream`/`watch` run.
+    #[schemars(title = "initial")]
+    Initial,
+    /// An OS network-config change (interface up/down, IP/DNS reconfig, VPN).
+    #[schemars(title = "config_change")]
+    ConfigChange,
+    /// The adaptive-interval poll safety net.
+    #[schemars(title = "poll")]
+    Poll,
+    /// A `WatchCommand` read from stdin.
+    #[schemars(title = "command")]
+    Command,
+}
+
+/// Whether the OS config-change watcher started, reported by
+/// `StreamEvent::Hello`. `Unavailable` means `watch` degraded to poll-only
+/// (e.g. `SCDynamicStore` setup rejected in a sandbox).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WatcherState {
+    #[schemars(title = "active")]
+    Active,
+    #[schemars(title = "unavailable")]
+    Unavailable,
+    /// No config-change watcher is run at all — the one-shot `stream`
+    /// subcommand, which does a single pass and exits.
+    #[schemars(title = "disabled")]
+    Disabled,
 }
 
 /// One probe's result, delivered as soon as that probe completes. For a
@@ -355,13 +410,67 @@ pub enum StatusField {
     CaptivePortal(CaptivePortalStatus),
 }
 
-/// JSON Schema for `StatusField` — the wire format streamed by the `stream`
-/// and `watch` CLI subcommands (one object per NDJSON line). Generated
-/// directly from the enum via `schemars` rather than hand-written, so it
-/// can't silently drift from the actual Rust type the way independently
-/// maintained docs (or the Swift decode types) can.
+/// One line of the `stream`/`watch` stdout wire protocol (v1). Every
+/// `StatusField` result is wrapped in `Field` and carries the monotonic
+/// `generation` of the check that produced it; each check is bracketed by
+/// `CheckStarted`/`CheckComplete` with the same generation; `watch`
+/// additionally emits `Heartbeat` for liveness and `Error` for a bad stdin
+/// command or a probe failure. Every run's first line is `Hello`.
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
+pub enum StreamEvent {
+    /// First line of every `stream`/`watch` run — declares the protocol
+    /// version and (for `watch`) whether the config-change watcher started.
+    #[schemars(title = "Hello")]
+    Hello {
+        protocol_version: u32,
+        config_watcher: WatcherState,
+        healthy_interval_secs: u64,
+        degraded_interval_secs: u64,
+    },
+    /// A check has begun; every following `Field` at this `generation`
+    /// belongs to it, until the matching `CheckComplete`.
+    #[schemars(title = "CheckStarted")]
+    CheckStarted {
+        generation: u64,
+        scope: Scope,
+        trigger: Trigger,
+        /// Echoed from `WatchCommand::RefreshToken`; `None` for any
+        /// non-command-triggered check.
+        token: Option<String>,
+    },
+    /// One probe result, tagged with its check's `generation`.
+    #[schemars(title = "Field")]
+    Field {
+        generation: u64,
+        field: StatusField,
+    },
+    /// The check at this `generation` has finished (or been superseded —
+    /// either way its `Field` lines will not continue).
+    #[schemars(title = "CheckComplete")]
+    CheckComplete { generation: u64 },
+    /// `watch`-only liveness marker, emitted on a fixed cadence regardless
+    /// of check activity.
+    #[schemars(title = "Heartbeat")]
+    Heartbeat {},
+    /// A recoverable problem (`fatal: false` — e.g. an unrecognized stdin
+    /// command) or a terminal one (`fatal: true`).
+    #[schemars(title = "Error")]
+    Error { message: String, fatal: bool },
+}
+
+/// JSON Schema for `StatusField` — the payload inside `StreamEvent::Field`,
+/// also exposed standalone for consumers that only care about the probe
+/// results. Generated directly from the enum via `schemars` rather than
+/// hand-written, so it can't silently drift from the actual Rust type the
+/// way independently maintained docs (or the Swift decode types) can.
 pub fn status_field_schema() -> schemars::Schema {
     schemars::schema_for!(StatusField)
+}
+
+/// JSON Schema for `StreamEvent` — the `stream`/`watch` stdout wire format
+/// (one object per NDJSON line). Same rationale as `status_field_schema`.
+pub fn stream_event_schema() -> schemars::Schema {
+    schemars::schema_for!(StreamEvent)
 }
 
 /// JSON Schema for `WatchCommand` — the other half of `watch`'s
@@ -892,6 +1001,63 @@ mod tests {
     fn watch_command_rejects_unrecognized_input() {
         assert!(serde_json::from_str::<WatchCommand>(r#"{"Bogus":null}"#).is_err());
         assert!(serde_json::from_str::<WatchCommand>("not json").is_err());
+    }
+
+    #[test]
+    fn watch_command_refresh_token_decodes_and_keeps_bare_refresh_working() {
+        let decoded: WatchCommand =
+            serde_json::from_str(r#"{"RefreshToken":{"token":"abc"}}"#).unwrap();
+        assert_eq!(
+            decoded,
+            WatchCommand::RefreshToken {
+                token: "abc".to_string()
+            }
+        );
+        let bare: WatchCommand = serde_json::from_str(r#""Refresh""#).unwrap();
+        assert_eq!(bare, WatchCommand::Refresh);
+    }
+
+    #[test]
+    fn stream_event_field_serializes_to_the_documented_wire_shape() {
+        let event = StreamEvent::Field {
+            generation: 7,
+            field: StatusField::SplitDns(false),
+        };
+        let json: serde_json::Value = serde_json::to_value(&event).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"Field": {"generation": 7, "field": {"SplitDns": false}}})
+        );
+    }
+
+    #[test]
+    fn stream_event_check_started_omits_no_fields_and_renders_enums_lowercase() {
+        let event = StreamEvent::CheckStarted {
+            generation: 3,
+            scope: Scope::Full,
+            trigger: Trigger::Command,
+            token: Some("t1".to_string()),
+        };
+        assert_eq!(
+            serde_json::to_value(&event).unwrap(),
+            serde_json::json!({"CheckStarted": {
+                "generation": 3, "scope": "full", "trigger": "command", "token": "t1"
+            }})
+        );
+    }
+
+    /// Same as `committed_schema_matches_status_field`, for the `stream`/
+    /// `watch` stdout envelope (`schema/stream-event.schema.json`).
+    #[test]
+    fn committed_schema_matches_stream_event() {
+        let generated = serde_json::to_string_pretty(&stream_event_schema()).unwrap();
+        let committed = include_str!("../../../schema/stream-event.schema.json");
+        assert_eq!(
+            generated.trim_end(),
+            committed.trim_end(),
+            "schema/stream-event.schema.json is stale — regenerate with `mise run schema:gen` \
+             and commit the result"
+        );
     }
 
     #[test]

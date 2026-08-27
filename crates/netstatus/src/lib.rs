@@ -33,8 +33,9 @@ pub use resolution::{DEFAULT_RESOLUTION_TARGETS, ResolutionResult, resolve, reso
 pub use sc_watch::{WatchHandle, watch_config_changes};
 pub use status::{
     ConnectionConfidence, DEFAULT_PING_TARGETS, DEFAULT_PING_TARGETS_V6, NetworkStatus,
-    PartialStatus, StatusField, WatchCommand, collect, collect_confidence_streaming,
-    collect_streaming, confidence_only, status_field_schema, watch_command_schema,
+    PartialStatus, Scope, StatusField, StreamEvent, Trigger, WatchCommand, WatcherState, collect,
+    collect_confidence_streaming, collect_streaming, confidence_only, status_field_schema,
+    stream_event_schema, watch_command_schema,
 };
 pub use vpn::{VpnStatus, vpn_status};
 pub use wifi::{WifiIdentity, WifiRadio, WifiStatus, wifi_identity, wifi_radio, wifi_status};

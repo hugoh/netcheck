@@ -1,12 +1,33 @@
 import Foundation
 
 /// A command sent as NDJSON on `netcheck watch`'s stdin, one per line —
-/// mirrors Rust's `netstatus::status::WatchCommand`. Encodes as the bare
-/// string `"Refresh"`: serde's canonical JSON form for a data-less enum
-/// variant (confirmed against the real Rust type, not guessed — see
-/// `WatchCommandTests`).
-enum WatchCommand: String, Encodable {
-    case refresh = "Refresh"
+/// mirrors Rust's `netstatus::status::WatchCommand`. `refresh` encodes as
+/// the bare string `"Refresh"` (serde's canonical form for a data-less
+/// variant); `refreshToken` encodes as `{"RefreshToken":{"token":"…"}}`,
+/// carrying a correlation token the resulting `CheckStarted` echoes back.
+enum WatchCommand: Encodable {
+    case refresh
+    case refreshToken(String)
+
+    private enum OuterKey: String, CodingKey {
+        case refreshToken = "RefreshToken"
+    }
+
+    private enum InnerKey: String, CodingKey {
+        case token
+    }
+
+    func encode(to encoder: Encoder) throws {
+        switch self {
+        case .refresh:
+            var container = encoder.singleValueContainer()
+            try container.encode("Refresh")
+        case .refreshToken(let token):
+            var outer = encoder.container(keyedBy: OuterKey.self)
+            var inner = outer.nestedContainer(keyedBy: InnerKey.self, forKey: .refreshToken)
+            try inner.encode(token, forKey: .token)
+        }
+    }
 }
 
 struct NetInterface: Codable, Identifiable {

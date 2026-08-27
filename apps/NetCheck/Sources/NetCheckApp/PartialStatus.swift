@@ -53,6 +53,61 @@ struct StatusFieldEnvelope: Decodable {
     }
 }
 
+/// One line of the `netcheck stream`/`watch` stdout wire protocol (v1) —
+/// exactly one field is non-nil per envelope, matching Rust's `StreamEvent`
+/// enum. `field` carries a `StatusFieldEnvelope` plus the `generation` of
+/// the check that produced it; `checkStarted`/`checkComplete` bracket each
+/// check; `hello` is always the first line; `heartbeat` is `watch`-only
+/// liveness; `error` is a bad stdin command or a probe failure.
+struct StreamEventEnvelope: Decodable {
+    let hello: Hello?
+    let checkStarted: CheckStarted?
+    let field: FieldEvent?
+    let checkComplete: GenerationOnly?
+    let heartbeat: Heartbeat?
+    let error: WireError?
+
+    enum CodingKeys: String, CodingKey {
+        case hello = "Hello"
+        case checkStarted = "CheckStarted"
+        case field = "Field"
+        case checkComplete = "CheckComplete"
+        case heartbeat = "Heartbeat"
+        case error = "Error"
+    }
+
+    /// Decoded with the caller's `.convertFromSnakeCase` strategy, so the
+    /// wire's `protocol_version` / `config_watcher` map to these by name —
+    /// no explicit `CodingKeys` (which the strategy would fight).
+    struct Hello: Decodable {
+        let protocolVersion: Int
+        let configWatcher: String
+    }
+
+    struct CheckStarted: Decodable {
+        let generation: Int
+        let scope: String
+        let trigger: String
+        let token: String?
+    }
+
+    struct FieldEvent: Decodable {
+        let generation: Int
+        let field: StatusFieldEnvelope
+    }
+
+    struct GenerationOnly: Decodable {
+        let generation: Int
+    }
+
+    struct Heartbeat: Decodable {}
+
+    struct WireError: Decodable {
+        let message: String
+        let fatal: Bool
+    }
+}
+
 /// Progressively-filled network status, mirroring netcheck-tui/-gui's
 /// `PartialStatus`. Single-value fields start `nil` and are merged in as
 /// each `StatusFieldEnvelope` line arrives; a refresh never blanks a field
@@ -139,10 +194,11 @@ struct PartialNetworkStatus {
         rowGeneration[rowKey] = generation
     }
 
-    /// `generation` is the caller's own refresh-attempt counter (see
-    /// `StatusFetcher.refreshGeneration`) — not part of the wire format,
-    /// just stamped onto each row locally so `isPending` can tell "updated
-    /// before this refresh started" from "updated by it".
+    /// `generation` is the wire generation from the enclosing
+    /// `StreamEvent::Field` (monotonic per `netcheck watch` process),
+    /// stamped onto each row so `isPending` can tell "updated before the
+    /// in-flight refresh started" from "updated by it". The auto-refresh-off
+    /// one-shot `stream` fallback passes its own local counter instead.
     mutating func merge(_ envelope: StatusFieldEnvelope, generation: Int) {
         if let v = envelope.interfaces { interfaces = v }
         if let v = envelope.vpn { vpn = v }

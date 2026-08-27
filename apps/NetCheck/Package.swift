@@ -20,7 +20,10 @@ let package = Package(
                 "NetCheckApp",
                 .product(name: "Testing", package: "swift-testing")
             ],
-            path: "Tests/NetCheckAppTests"
+            path: "Tests/NetCheckAppTests",
+            // Executable stand-ins for `netcheck watch`, run as subprocesses
+            // by StatusFetcherTests — not Swift sources to compile.
+            exclude: ["fixtures"]
         )
     ]
 )

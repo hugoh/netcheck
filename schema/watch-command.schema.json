@@ -5,9 +5,31 @@
   "oneOf": [
     {
       "title": "Refresh",
-      "description": "Run a full check immediately, same as a config-change fire.",
+      "description": "Run a full check immediately, same as a config-change fire. Canonical\nwire form is the bare string `\"Refresh\"`.",
       "type": "string",
       "const": "Refresh"
+    },
+    {
+      "title": "RefreshToken",
+      "description": "Same as `Refresh`, but carries a caller-chosen correlation `token`\nthat the resulting `StreamEvent::CheckStarted` echoes back, so a\nclient can tell which check its own request produced (vs. a\nconcurrent poll/config-change fire). Wire form\n`{\"RefreshToken\":{\"token\":\"…\"}}`.",
+      "type": "object",
+      "properties": {
+        "RefreshToken": {
+          "type": "object",
+          "properties": {
+            "token": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "token"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "RefreshToken"
+      ]
     }
   ]
 }

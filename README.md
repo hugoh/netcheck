@@ -123,7 +123,7 @@ netcheck resolve google.com github.com
 netcheck connect amazon.com microsoft.com --port 443
 netcheck stream                              # one snapshot as NDJSON, field by field
 netcheck watch                               # like stream, but keeps running — see below
-netcheck schema                              # JSON Schema for stream/watch's NDJSON output
+netcheck schema                              # JSON Schema for stream/watch's NDJSON wire format
 
 # dashboard keys: q quit, r refresh, a toggle auto-refresh, 1-4 switch tabs
 ```
@@ -141,57 +141,78 @@ scripting/piping into `jq`.
 ## Wire format
 
 `netcheck stream` and `netcheck watch` print NDJSON (one JSON object per
-line) instead of a single blocking snapshot — each line is one `StatusField`
-result as soon as that probe completes. `status`/`ping`/`resolve`/etc.
-still print one complete JSON object.
+line) instead of a single blocking snapshot. Every line is one externally
+tagged `StreamEvent` — `{"VariantName": <data>}` — from this set (wire
+protocol **v1**):
 
-Two things worth knowing about the shape:
+| Event | Meaning |
+| --- | --- |
+| `{"Hello":{"protocol_version":1,"config_watcher":"active","healthy_interval_secs":60,"degraded_interval_secs":10}}` | Always the first line. `config_watcher` is `active` / `unavailable` (poll-only fallback) for `watch`, `disabled` for `stream`. `protocol_version` bumps only on a breaking change. |
+| `{"CheckStarted":{"generation":7,"scope":"full","trigger":"command","token":"abc"}}` | A check began. `scope` is `full` or `confidence`; `trigger` is `initial` / `config_change` / `poll` / `command`; `token` echoes a `RefreshToken` command (else `null`). |
+| `{"Field":{"generation":7,"field":{"SplitDns":false}}}` | One probe result (`field` is the `StatusField` payload), tagged with its check's `generation`. |
+| `{"CheckComplete":{"generation":7}}` | The check at that `generation` finished (or was superseded — either way no more `Field` lines for it). |
+| `{"Heartbeat":{}}` | `watch` only, ~every 15s regardless of check activity. No line at all for ~45s means the collector is wedged — restart it. |
+| `{"Error":{"message":"…","fatal":false}}` | An unrecognized stdin command (`fatal:false`) or a terminal failure (`fatal:true`). |
 
-- **Externally tagged.** Each line is `{"VariantName": <data>}` — e.g.
-  `{"SplitDns":false}` or `{"IpStack":"Ipv4Only"}`.
-- **Target-list probes stream per-target, not per-list.** `Ping`, `Connect`,
-  and `Resolution` (reachability pings, TCP connects, DNS resolution) send
-  one message per target as soon as *that* target responds, instead of
-  waiting for the slowest target in the group — so one unreachable host
-  doesn't hold up the rest of the list from showing up:
+Other subcommands (`status`/`ping`/`resolve`/…) still print one complete
+JSON object, unchanged.
 
-  ```json
-  {"Ping":{"group":"Reachability","result":{"target":"1.1.1.1","reachable":true,"rtt_ms":12.3}}}
-  {"Ping":{"group":"Reachability","result":{"target":"8.8.8.8","reachable":true,"rtt_ms":9.1}}}
-  {"GroupComplete":"Reachability"}
-  ```
+**Generations.** `generation` is a monotonic `u64`, one per check. When
+checks overlap (a poll fires mid-refresh), only the newest generation keeps
+emitting `Field` lines — but every generation still emits its
+`CheckComplete`, so a client waiting on one is never stuck. A client
+attributes fields by `generation` and correlates *its own* refresh via the
+`token` it sent, echoed in `CheckStarted`.
 
-  `GroupComplete` marks a target list as fully drained; it's only sent for
-  the four groups (`Resolution`, `Reachability`, `ReachabilityV6`,
-  `DomainReachability`) that determine connection confidence, since that's
-  the only place completeness (not just partial data) actually matters.
+**Target-list probes stream per-target, not per-list.** `Ping`, `Connect`,
+and `Resolution` `StatusField`s arrive one per target as soon as *that*
+target responds, so one unreachable host doesn't hold up the rest:
 
-`netcheck watch` is bidirectional: alongside the `StatusField` NDJSON it
+```json
+{"Field":{"generation":7,"field":{"Ping":{"group":"Reachability","result":{"target":"1.1.1.1","reachable":true,"rtt_ms":12.3}}}}}
+{"Field":{"generation":7,"field":{"Ping":{"group":"Reachability","result":{"target":"8.8.8.8","reachable":true,"rtt_ms":9.1}}}}}
+{"Field":{"generation":7,"field":{"GroupComplete":"Reachability"}}}
+```
+
+`GroupComplete` marks a target list as fully drained; it's only sent for
+the four groups (`Resolution`, `Reachability`, `ReachabilityV6`,
+`DomainReachability`) that determine connection confidence.
+
+`netcheck watch` is bidirectional: alongside the `StreamEvent` NDJSON it
 writes to stdout, it reads `WatchCommand` lines from stdin and acts on them
-immediately — currently just `"Refresh"` (a data-less enum variant's
-canonical JSON form is a bare string, not `{"Refresh":null}`), which runs a
-full check right away instead of waiting for the next config-change event
-or poll interval. This lets a caller that already has a `watch` process
-running trigger a manual refresh by writing one line to its stdin, rather
-than spawning a second concurrent `netcheck` process — deliberately so:
-running two of these against the same terminal/pipes concurrently is a real
-hazard (a `FileHandle.bytes.lines`-based reader deadlocks its second
-concurrent instance in the same process, which is exactly how the SwiftUI
-app used to trigger a manual refresh before this existed).
+immediately — either `"Refresh"` (bare string) or
+`{"RefreshToken":{"token":"…"}}` (carries a correlation token the resulting
+`CheckStarted` echoes back). Both run a full check right away instead of
+waiting for the next config-change event or poll interval. This lets a
+caller that already has a `watch` process running trigger a manual refresh
+by writing one line to its stdin, rather than spawning a second concurrent
+`netcheck` process — deliberately so: running two of these against the same
+terminal/pipes concurrently is a real hazard (a
+`FileHandle.bytes.lines`-based reader deadlocks its second concurrent
+instance in the same process, which is exactly how the SwiftUI app used to
+trigger a manual refresh before this existed). An unrecognized command
+yields an `Error` event, not a silent drop.
 
-Both directions are defined as JSON Schema, generated straight from the
-real Rust types so they can't drift from the wire format the way
-hand-written docs could:
+**Migrating from the pre-v1 format** (bare `StatusField` lines): the probe
+results now live under `.Field.field`, so a `jq` filter like `.Ping`
+becomes `fromjson? | select(.Field) | .Field.field.Ping`. A binary that
+emits no `Hello` first line is pre-v1.
 
-- **Output** (`StatusField`, written to stdout by `stream`/`watch`):
-  [schema/status-field.schema.json](schema/status-field.schema.json) — run
-  `netcheck schema` (or `netcheck schema status-field`) to print the
-  current version, or
-  [view the status field schema online](https://netcheck.larve.net/schema/status-field/).
+The wire format is defined as JSON Schema, generated straight from the real
+Rust types so it can't drift the way hand-written docs could:
+
+- **Output** (`StreamEvent`, written to stdout by `stream`/`watch`):
+  [schema/stream-event.schema.json](schema/stream-event.schema.json) — run
+  `netcheck schema` (or `netcheck schema stream-event`) to print it, or read
+  the [browsable StreamEvent schema](https://netcheck.larve.net/schema/stream-event/).
+  The bare `StatusField` payload has its own view:
+  [schema/status-field.schema.json](schema/status-field.schema.json)
+  (`netcheck schema status-field`, or the
+  [browsable StatusField schema](https://netcheck.larve.net/schema/status-field/)).
 - **Input** (`WatchCommand`, read from stdin by `watch` only):
   [schema/watch-command.schema.json](schema/watch-command.schema.json) —
-  run `netcheck schema watch-command` to print it, or
-  [view the watch command schema online](https://netcheck.larve.net/schema/watch-command/).
+  run `netcheck schema watch-command` to print it, or read the
+  [browsable WatchCommand schema](https://netcheck.larve.net/schema/watch-command/).
 
 Each status collection — every CLI `status`/`stream` call, and every
 dashboard auto-refresh — includes a plain HTTP (not HTTPS) request to

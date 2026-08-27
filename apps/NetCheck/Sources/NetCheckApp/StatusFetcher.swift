@@ -2,36 +2,22 @@ import AppKit
 import Foundation
 
 /// Runs the `netcheck` CLI's `stream`/`watch` subcommands and decodes their
-/// NDJSON output line by line as it arrives, publishing each field the
-/// moment it's ready instead of waiting for a full snapshot — mirrors
-/// netcheck-tui/-gui's streamed `PartialStatus` model. Reuses the
+/// NDJSON `StreamEvent` output line by line as it arrives, publishing each
+/// field the moment it's ready instead of waiting for a full snapshot —
+/// mirrors netcheck-tui/-gui's streamed `PartialStatus` model. Reuses the
 /// already-tested Rust `netstatus` core instead of re-implementing any
 /// diagnostics (or refresh cadence) in Swift: auto-refresh runs `watch`,
 /// which re-checks on OS network-config changes plus an adaptive-interval
 /// poll as a safety net, instead of a fixed Swift-side timer.
-/// Accumulates raw pipe reads and splits off complete lines. `@unchecked
-/// Sendable`: a `readabilityHandler` is invoked serially by the OS for a
-/// given `FileHandle` — never concurrently with itself — so a single
-/// instance is safe to mutate across those calls despite not being
-/// actor-isolated.
-private final class LineBuffer: @unchecked Sendable {
-    private var data = Data()
-
-    func appendAndExtractLines(_ chunk: Data) -> [String] {
-        data.append(chunk)
-        var lines: [String] = []
-        while let newline = data.firstIndex(of: UInt8(ascii: "\n")) {
-            if let line = String(data: data[..<newline], encoding: .utf8) {
-                lines.append(line)
-            }
-            data.removeSubrange(...newline)
-        }
-        return lines
-    }
-}
-
+///
+/// The subprocess/pipe plumbing (`streamLines`, `send`, `locateBinary`,
+/// `LineBuffer`) lives in `StatusFetcherProcess.swift`.
 @MainActor
 final class StatusFetcher: ObservableObject {
+    /// Wire protocol version this app understands — must match
+    /// `StreamEvent::Hello.protocol_version` from the `netcheck` binary.
+    static let supportedProtocolVersion = 1
+
     @Published var status = PartialNetworkStatus()
     @Published var lastUpdated: Date?
     @Published var autoRefreshEnabled = true
@@ -42,29 +28,52 @@ final class StatusFetcher: ObservableObject {
     /// changes). Not raised for the background `watch` auto-refresh, which
     /// shouldn't visually interrupt the user for routine polling.
     @Published var isRefreshing = false
+    /// The wire generation of the manual refresh currently in flight, once
+    /// its `CheckStarted` has echoed our token back — `nil` before that (a
+    /// few ms) and whenever no manual refresh is pending. Drives which rows
+    /// the UI marks pending (`PartialNetworkStatus.isPending`).
+    @Published private(set) var pendingRefreshGeneration: Int?
 
     /// Only used as the auto-refresh-off fallback — a one-shot `netcheck
     /// stream` process for a manual refresh, spawned when there's no
     /// persistent `watch` process to signal instead. `nil` whenever
     /// auto-refresh is on.
     private var refreshTask: Task<Void, Never>?
-    /// Bumped on every manual refresh; used both to cancel a superseded
-    /// fallback `refresh()` task and, via `PartialNetworkStatus.rowGeneration`
-    /// / `groupCompleteGeneration`, to tell the view which
-    /// reachability/resolution rows the in-progress refresh hasn't updated
-    /// yet (`PartialNetworkStatus.isPending`) and when it's fully done
-    /// (`PartialNetworkStatus.isRefreshComplete`).
-    private(set) var refreshGeneration = 0
+    /// Local refresh counter for the fallback path only. The `watch` path
+    /// uses the authoritative wire generation instead (see `merge`).
+    private var fallbackGeneration = 0
+    /// The correlation token of the manual refresh in flight, matched
+    /// against `CheckStarted.token` to learn its wire generation.
+    private var pendingRefreshToken: String?
     private var watchTask: Task<Void, Never>?
+    private var watchdogTask: Task<Void, Never>?
+    private var restartTask: Task<Void, Never>?
+    /// Last time any `StreamEvent` (including `Heartbeat`) arrived — the
+    /// watchdog restarts `watch` if this goes stale.
+    private var lastEventAt = Date()
+    /// Backoff before the next `watch` restart; grows on repeated failures,
+    /// resets on a healthy `Hello`.
+    private var restartBackoff: Duration = .seconds(1)
+    /// Cleared to `false` on a `Hello` whose `protocol_version` this app
+    /// doesn't understand — field events are then ignored rather than
+    /// decoded against a format that may have changed shape.
+    private var protocolCompatible = true
     /// stdin of the currently-running `watch` process, if any — `refresh()`
-    /// writes a `WatchCommand.refresh` line here instead of spawning a
-    /// second concurrent subprocess when this is non-nil.
+    /// writes a `WatchCommand` line here instead of spawning a second
+    /// concurrent subprocess when this is non-nil.
     private var watchStdin: FileHandle?
     private let binaryURL: URL?
     private var terminationObserver: NSObjectProtocol?
 
-    init() {
-        binaryURL = Self.locateBinary()
+    convenience init() {
+        self.init(binary: Self.locateBinary())
+    }
+
+    /// Designated initializer — `binary` is the `netcheck` executable to
+    /// run. Production uses `locateBinary()`; tests pass a deterministic
+    /// fixture that emits canned `StreamEvent` NDJSON.
+    init(binary: URL?) {
+        binaryURL = binary
         // No separate manual `refresh()` here: `netcheck watch`'s own first
         // fire is already a full snapshot (mirrors the TUI, which dropped
         // its redundant initial-fetch thread for the same reason), so
@@ -90,6 +99,8 @@ final class StatusFetcher: ObservableObject {
             MainActor.assumeIsolated {
                 self?.refreshTask?.cancel()
                 self?.watchTask?.cancel()
+                self?.watchdogTask?.cancel()
+                self?.restartTask?.cancel()
             }
         }
     }
@@ -97,21 +108,27 @@ final class StatusFetcher: ObservableObject {
     func toggleAutoRefresh() {
         autoRefreshEnabled.toggle()
         if autoRefreshEnabled {
+            restartBackoff = .seconds(1)
             startWatching()
         } else {
             watchTask?.cancel()
             watchTask = nil
+            watchdogTask?.cancel()
+            watchdogTask = nil
+            restartTask?.cancel()
+            restartTask = nil
             watchStdin = nil
         }
     }
 
     /// Starts the persistent `netcheck watch` subprocess and merges each
-    /// NDJSON line it emits, for as long as auto-refresh stays on. Unlike
-    /// the auto-refresh-off fallback in `refresh()`, this runs one
+    /// `StreamEvent` line it emits, for as long as auto-refresh stays on.
+    /// Unlike the auto-refresh-off fallback in `refresh()`, this runs one
     /// long-lived process rather than restarting on a timer — the Rust
     /// side owns the config-change/poll cadence, and `refresh()` triggers
     /// an immediate check by writing to this same process's stdin instead
-    /// of spawning a second one.
+    /// of spawning a second one. If the process dies or stops responding,
+    /// `scheduleRestart` brings it back with backoff.
     private func startWatching() {
         guard let binaryURL else {
             errorMessage = "netcheck binary not found. Set NETCHECK_BIN, or build it with:\n" +
@@ -121,6 +138,9 @@ final class StatusFetcher: ObservableObject {
 
         let (stream, stdin) = Self.streamLines(url: binaryURL, args: ["watch"])
         watchStdin = stdin
+        lastEventAt = Date()
+        protocolCompatible = true
+        startWatchdog()
         watchTask = Task {
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -128,26 +148,115 @@ final class StatusFetcher: ObservableObject {
             do {
                 for try await line in stream {
                     guard !line.isEmpty, let data = line.data(using: .utf8) else { continue }
-                    guard let envelope = try? decoder.decode(StatusFieldEnvelope.self, from: data) else {
+                    guard let event = try? decoder.decode(StreamEventEnvelope.self, from: data) else {
                         continue
                     }
-                    status.merge(envelope, generation: refreshGeneration)
-                    lastUpdated = Date()
-                    errorMessage = nil
-                    // A stdin-triggered refresh has no "process exited"
-                    // completion signal the way the one-shot fallback does
-                    // — watch for the same confidence-readiness signal
-                    // `PartialNetworkStatus.confidence` itself waits on.
-                    if isRefreshing, status.isRefreshComplete(asOf: refreshGeneration) {
-                        isRefreshing = false
-                    }
+                    handle(event)
+                }
+                if autoRefreshEnabled {
+                    scheduleRestart(reason: "netcheck watch exited unexpectedly")
                 }
             } catch is CancellationError {
                 // Auto-refresh was toggled off; nothing to report.
             } catch {
-                errorMessage = "Failed to run netcheck watch: \(error.localizedDescription)"
+                if autoRefreshEnabled {
+                    scheduleRestart(reason: "netcheck watch failed: \(error.localizedDescription)")
+                }
             }
             watchStdin = nil
+        }
+    }
+
+    private func handleHello(_ hello: StreamEventEnvelope.Hello) {
+        restartBackoff = .seconds(1)
+        if hello.protocolVersion != Self.supportedProtocolVersion {
+            protocolCompatible = false
+            errorMessage = "netcheck speaks wire protocol \(hello.protocolVersion); " +
+                "this app expects \(Self.supportedProtocolVersion). Update netcheck."
+        } else if hello.configWatcher == "unavailable" {
+            errorMessage = "Network-change watching is unavailable; " +
+                "falling back to periodic polling."
+        }
+    }
+
+    private func handle(_ event: StreamEventEnvelope) {
+        lastEventAt = Date()
+
+        if let hello = event.hello {
+            handleHello(hello)
+            return
+        }
+
+        guard protocolCompatible else { return }
+
+        if let started = event.checkStarted {
+            if let token = started.token, token == pendingRefreshToken {
+                pendingRefreshGeneration = started.generation
+            }
+            return
+        }
+
+        if let f = event.field {
+            status.merge(f.field, generation: f.generation)
+            lastUpdated = Date()
+            errorMessage = nil
+            return
+        }
+
+        if let complete = event.checkComplete {
+            if let pending = pendingRefreshGeneration, complete.generation >= pending {
+                isRefreshing = false
+                pendingRefreshToken = nil
+                pendingRefreshGeneration = nil
+            }
+            return
+        }
+
+        if event.heartbeat != nil {
+            return
+        }
+
+        if let wireError = event.error {
+            errorMessage = wireError.message
+            if wireError.fatal, autoRefreshEnabled {
+                scheduleRestart(reason: wireError.message)
+            }
+        }
+    }
+
+    /// Restarts the `watch` subprocess after a backoff — used when it exits,
+    /// errors fatally, or stops emitting events (watchdog). The backoff
+    /// grows on each consecutive restart (capped at 5s) and resets on the
+    /// next healthy `Hello`.
+    private func scheduleRestart(reason: String) {
+        errorMessage = reason
+        watchTask?.cancel()
+        watchTask = nil
+        watchStdin = nil
+        watchdogTask?.cancel()
+        watchdogTask = nil
+        restartTask?.cancel()
+
+        let backoff = restartBackoff
+        restartBackoff = min(restartBackoff * 2, .seconds(5))
+        restartTask = Task { [weak self] in
+            try? await Task.sleep(for: backoff)
+            guard !Task.isCancelled, let self, self.autoRefreshEnabled else { return }
+            self.startWatching()
+        }
+    }
+
+    private func startWatchdog() {
+        watchdogTask?.cancel()
+        watchdogTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(10))
+                guard let self, self.autoRefreshEnabled else { continue }
+                if Date().timeIntervalSince(self.lastEventAt) > 45 {
+                    self.scheduleRestart(reason: "netcheck watch stopped responding")
+                    return
+                }
+            }
         }
     }
 
@@ -158,24 +267,29 @@ final class StatusFetcher: ObservableObject {
             return
         }
 
-        refreshGeneration += 1
         isRefreshing = true
 
         if let watchStdin {
             // A `watch` process is already running — trigger it via stdin
-            // instead of spawning a second concurrent subprocess (real
-            // deadlock hazard, see streamLines' doc comment). Completion is
-            // detected in startWatching()'s own merge loop.
-            Self.send(.refresh, to: watchStdin)
+            // with a correlation token instead of spawning a second
+            // concurrent subprocess (real deadlock hazard, see streamLines'
+            // doc comment). Completion is detected in `handle` when the
+            // `CheckComplete` for this token's generation arrives.
+            let token = UUID().uuidString
+            pendingRefreshToken = token
+            pendingRefreshGeneration = nil
+            Self.send(.refreshToken(token), to: watchStdin)
             return
         }
 
         // Auto-refresh is off — no persistent process to signal, so fall
-        // back to a one-shot `netcheck stream`, same as before this
-        // process became bidirectional. Safe by construction: nothing else
-        // reads a pipe concurrently while `watchTask`/`watchStdin` are nil.
+        // back to a one-shot `netcheck stream`. Safe by construction:
+        // nothing else reads a pipe concurrently while `watchTask` /
+        // `watchStdin` are nil.
         refreshTask?.cancel()
-        let generation = refreshGeneration
+        fallbackGeneration += 1
+        let generation = fallbackGeneration
+        pendingRefreshGeneration = generation
         let (stream, _) = Self.streamLines(url: binaryURL, args: ["stream"])
         refreshTask = Task {
             let decoder = JSONDecoder()
@@ -183,134 +297,26 @@ final class StatusFetcher: ObservableObject {
 
             do {
                 for try await line in stream {
-                    guard generation == refreshGeneration else { return }
+                    guard generation == fallbackGeneration else { return }
                     guard !line.isEmpty, let data = line.data(using: .utf8) else { continue }
-                    guard let envelope = try? decoder.decode(StatusFieldEnvelope.self, from: data) else {
-                        continue
-                    }
-                    status.merge(envelope, generation: generation)
+                    guard let event = try? decoder.decode(StreamEventEnvelope.self, from: data),
+                          let f = event.field
+                    else { continue }
+                    status.merge(f.field, generation: generation)
                     lastUpdated = Date()
                     errorMessage = nil
                 }
             } catch is CancellationError {
                 // Superseded by a newer refresh; nothing to report.
             } catch {
-                guard generation == refreshGeneration else { return }
+                guard generation == fallbackGeneration else { return }
                 errorMessage = "Failed to run netcheck: \(error.localizedDescription)"
             }
-            if generation == refreshGeneration {
+            if generation == fallbackGeneration {
                 isRefreshing = false
+                pendingRefreshToken = nil
+                pendingRefreshGeneration = nil
             }
         }
-    }
-
-    /// Runs `netcheck stream`/`watch`, yielding each line of its stdout as
-    /// it's written (no waiting for the process to exit, no blocking reads)
-    /// and returning a handle to write `WatchCommand` lines to its stdin —
-    /// only meaningful for `watch`, which reads and acts on them; `stream`
-    /// ignores stdin entirely, but there's no harm giving it a pipe nobody
-    /// writes to.
-    ///
-    /// Uses `FileHandle.readabilityHandler` + manual line-buffering rather
-    /// than the more modern `FileHandle.bytes.lines` async sequence: with
-    /// two of these running concurrently in the same process — the
-    /// long-lived `watch` one from auto-refresh, plus a one-shot `stream`
-    /// one from a manual refresh — `bytes.lines` deadlocks the second
-    /// reader indefinitely (confirmed by a standalone repro: `stream`
-    /// starts, `watch` is already running, `stream` never yields a single
-    /// line or completes). `readabilityHandler` doesn't have this problem.
-    /// (This deadlock is exactly why manual refresh now prefers writing to
-    /// an already-running `watch` process's stdin over spawning a second
-    /// concurrent process at all — see `refresh()`.)
-    private nonisolated static func streamLines(
-        url: URL,
-        args: [String]
-    ) -> (stream: AsyncThrowingStream<String, Error>, stdin: FileHandle) {
-        let inPipe = Pipe()
-        let stream = AsyncThrowingStream<String, Error> { continuation in
-            let process = Process()
-            process.executableURL = url
-            process.arguments = args
-            let outPipe = Pipe()
-            process.standardOutput = outPipe
-            process.standardError = Pipe()
-            process.standardInput = inPipe
-
-            let buffer = LineBuffer()
-            outPipe.fileHandleForReading.readabilityHandler = { handle in
-                let data = handle.availableData
-                guard !data.isEmpty else {
-                    handle.readabilityHandler = nil
-                    return
-                }
-                for line in buffer.appendAndExtractLines(data) {
-                    continuation.yield(line)
-                }
-            }
-
-            process.terminationHandler = { _ in
-                outPipe.fileHandleForReading.readabilityHandler = nil
-                continuation.finish()
-            }
-
-            do {
-                try process.run()
-            } catch {
-                continuation.finish(throwing: error)
-            }
-
-            continuation.onTermination = { _ in
-                outPipe.fileHandleForReading.readabilityHandler = nil
-                if process.isRunning { process.terminate() }
-            }
-        }
-        return (stream, inPipe.fileHandleForWriting)
-    }
-
-    /// JSON-encodes `command` as a single NDJSON line and writes it to
-    /// `stdin`. Errors are swallowed (matches the fire-and-forget nature of
-    /// `WatchCommand`: if this write is lost, the next manual refresh or
-    /// the periodic poll recovers).
-    private static func send(_ command: WatchCommand, to stdin: FileHandle) {
-        guard var data = try? JSONEncoder().encode(command) else { return }
-        data.append(UInt8(ascii: "\n"))
-        try? stdin.write(contentsOf: data)
-    }
-
-    private static func locateBinary() -> URL? {
-        let fm = FileManager.default
-
-        if let envPath = ProcessInfo.processInfo.environment["NETCHECK_BIN"], fm.fileExists(atPath: envPath) {
-            return URL(fileURLWithPath: envPath)
-        }
-
-        if let bundled = Bundle.main.executableURL?
-            .deletingLastPathComponent()
-            .appendingPathComponent("netcheck"),
-            fm.fileExists(atPath: bundled.path)
-        {
-            return bundled
-        }
-
-        let candidates = [
-            "target/release/netcheck",
-            "target/debug/netcheck",
-            "../../target/release/netcheck",
-            "../../target/debug/netcheck",
-        ]
-        for candidate in candidates where fm.fileExists(atPath: candidate) {
-            return URL(fileURLWithPath: candidate).absoluteURL
-        }
-
-        if let pathEnv = ProcessInfo.processInfo.environment["PATH"] {
-            for dir in pathEnv.split(separator: ":") {
-                let candidate = "\(dir)/netcheck"
-                if fm.fileExists(atPath: candidate) {
-                    return URL(fileURLWithPath: candidate)
-                }
-            }
-        }
-
-        return nil
     }
 }

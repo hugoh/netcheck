@@ -195,7 +195,15 @@ fn spawn_workers(
                 let refreshing = refreshing.clone();
                 let latest_manual_gen = latest_manual_gen.clone();
                 std::thread::spawn(move || {
-                    watch::run_and_forward(&tx, &generation, this_gen, CheckScope::Full, |_| {});
+                    watch::run_and_forward(
+                        &generation,
+                        this_gen,
+                        CheckScope::Full,
+                        |_| {},
+                        |field| {
+                            let _ = tx.send(field);
+                        },
+                    );
                     if latest_manual_gen.load(Ordering::SeqCst) == this_gen {
                         refreshing.store(false, Ordering::Relaxed);
                     }
@@ -207,12 +215,21 @@ fn spawn_workers(
     let fire = {
         let tx = tx.clone();
         let generation = generation.clone();
-        move |scope: CheckScope| {
+        move |scope: CheckScope, _trigger, _token| {
             let this_gen = generation.fetch_add(1, Ordering::SeqCst) + 1;
-            watch::run_and_forward(&tx, &generation, this_gen, scope, |_| {});
+            watch::run_and_forward(
+                &generation,
+                this_gen,
+                scope,
+                |_| {},
+                |field| {
+                    let _ = tx.send(field);
+                },
+            );
         }
     };
-    let trigger = watch::spawn_watch_trigger(auto_refresh, health, watch::Intervals::default(), fire);
+    let (trigger, _watcher_state) =
+        watch::spawn_watch_trigger(auto_refresh, health, watch::Intervals::default(), fire);
 
     (rx, manual_tx, trigger, generation)
 }

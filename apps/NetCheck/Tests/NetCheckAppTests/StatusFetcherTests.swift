@@ -61,3 +61,76 @@ struct StatusFetcherRegressionTests {
         return candidates.contains { fm.fileExists(atPath: $0) }
     }
 }
+
+/// Wire-protocol behaviour driven by a deterministic fixture that emits
+/// canned `StreamEvent` NDJSON — no real `netcheck` binary, no network.
+@MainActor
+struct StatusFetcherProtocolTests {
+    private static func fixture(_ name: String) -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("fixtures/\(name)")
+    }
+
+    /// Polls `condition` on the main actor until true or the deadline
+    /// passes — the `.timeLimit` trait is the real backstop.
+    private func until(
+        _ condition: @MainActor () -> Bool,
+        timeout: Duration = .seconds(30)
+    ) async throws {
+        let start = ContinuousClock.now
+        while !condition() {
+            #expect(ContinuousClock.now - start < timeout, "condition never became true")
+            if ContinuousClock.now - start >= timeout { return }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func manualRefreshClearsOnlyOnItsOwnCheckComplete() async throws {
+        let fetcher = StatusFetcher(binary: Self.fixture("fake-netcheck"))
+        try await until { fetcher.status.hasAny && !fetcher.isRefreshing }
+
+        fetcher.refresh()
+        #expect(fetcher.isRefreshing)
+
+        try await until { !fetcher.isRefreshing }
+        #expect(fetcher.errorMessage == nil)
+        #expect(fetcher.pendingRefreshGeneration == nil)
+
+        fetcher.toggleAutoRefresh()
+        try await Task.sleep(for: .milliseconds(200))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func anAlreadySeenCheckCompleteDoesNotClearALaterManualRefresh() async throws {
+        let fetcher = StatusFetcher(binary: Self.fixture("fake-netcheck"))
+        // The fixture's startup check (generation 1) has fully completed —
+        // its CheckComplete(1) is already consumed.
+        try await until { fetcher.status.hasAny && !fetcher.isRefreshing }
+
+        fetcher.refresh()
+        // Synchronous check, before the fixture has even read our command:
+        // the prior CheckComplete(1) must not have pre-cleared this.
+        #expect(fetcher.isRefreshing)
+
+        // Only the manual refresh's own (generation 2) CheckComplete clears it.
+        try await until { !fetcher.isRefreshing }
+        #expect(fetcher.errorMessage == nil)
+
+        fetcher.toggleAutoRefresh()
+        try await Task.sleep(for: .milliseconds(200))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func watchThatDiesAfterHandshakeSurfacesAnErrorAndIsRestarted() async throws {
+        let fetcher = StatusFetcher(binary: Self.fixture("fake-netcheck-dies"))
+
+        try await until { fetcher.errorMessage != nil }
+        #expect(fetcher.errorMessage?.contains("netcheck watch") == true)
+
+        // Stop the restart loop before leaving the test.
+        fetcher.toggleAutoRefresh()
+        try await Task.sleep(for: .milliseconds(200))
+    }
+}

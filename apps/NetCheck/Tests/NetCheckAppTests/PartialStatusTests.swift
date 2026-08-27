@@ -173,6 +173,65 @@ struct PartialNetworkStatusTests {
     }
 }
 
+struct StreamEventEnvelopeTests {
+    private func decode(_ json: [String: Any]) throws -> StreamEventEnvelope {
+        let data = try JSONSerialization.data(withJSONObject: json)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(StreamEventEnvelope.self, from: data)
+    }
+
+    @Test func decodesHelloWithSnakeCasePayload() throws {
+        let event = try decode([
+            "Hello": [
+                "protocol_version": 1,
+                "config_watcher": "active",
+                "healthy_interval_secs": 60,
+                "degraded_interval_secs": 10
+            ]
+        ])
+        #expect(event.hello?.protocolVersion == 1)
+        #expect(event.hello?.configWatcher == "active")
+    }
+
+    @Test func decodesCheckStartedWithEchoedToken() throws {
+        let event = try decode([
+            "CheckStarted": ["generation": 3, "scope": "full", "trigger": "command", "token": "t1"]
+        ])
+        #expect(event.checkStarted?.generation == 3)
+        #expect(event.checkStarted?.token == "t1")
+    }
+
+    @Test func decodesFieldWithGenerationAndNestedStatusField() throws {
+        let event = try decode([
+            "Field": ["generation": 7, "field": ["SplitDns": false]]
+        ])
+        #expect(event.field?.generation == 7)
+        #expect(event.field?.field.splitDns == false)
+    }
+
+    @Test func decodesCheckCompleteHeartbeatAndError() throws {
+        #expect(try decode(["CheckComplete": ["generation": 4]]).checkComplete?.generation == 4)
+        #expect(try decode(["Heartbeat": [:]]).heartbeat != nil)
+        let err = try decode(["Error": ["message": "bad command", "fatal": false]]).error
+        #expect(err?.message == "bad command")
+        #expect(err?.fatal == false)
+    }
+}
+
+struct WatchCommandEncodingTests {
+    @Test func refreshEncodesAsBareString() throws {
+        let data = try JSONEncoder().encode(WatchCommand.refresh)
+        #expect(String(data: data, encoding: .utf8) == "\"Refresh\"")
+    }
+
+    @Test func refreshTokenEncodesAsExternallyTaggedObject() throws {
+        let data = try JSONEncoder().encode(WatchCommand.refreshToken("t1"))
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: [String: String]]
+        #expect(json == ["RefreshToken": ["token": "t1"]])
+    }
+}
+
 struct ConnectionConfidenceTests {
     private func status(
         dnsOk: Bool,
