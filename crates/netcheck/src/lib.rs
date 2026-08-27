@@ -187,10 +187,12 @@ pub fn run_command(command: Command) {
                 let fire = fire.clone();
                 std::thread::spawn(move || {
                     for line in std::io::stdin().lines() {
-                        let Ok(line) = line else { break };
-                        // A malformed/unrecognized line is ignored, not
-                        // fatal — a stray line on stdin shouldn't kill the
-                        // watch process.
+                        // A malformed/unrecognized line, or a single
+                        // transient read error (e.g. an invalid UTF-8 byte
+                        // on the pipe), is skipped, not fatal — the loop
+                        // keeps reading rather than exiting for the rest of
+                        // the process's life; only actual stdin EOF ends it.
+                        let Ok(line) = line else { continue };
                         if let Ok(netstatus::WatchCommand::Refresh) =
                             serde_json::from_str::<netstatus::WatchCommand>(&line)
                         {
