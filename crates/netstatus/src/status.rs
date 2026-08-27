@@ -758,6 +758,25 @@ mod tests {
         );
     }
 
+    /// Guards `schema/status-field.schema.json` (the wire format the README
+    /// links to, and what `netcheck schema` prints) against drifting from
+    /// `StatusField` itself — a schema hand-generated once and then left
+    /// alone would silently go stale the next time a field/variant changes.
+    /// Regenerate with `netcheck schema > schema/status-field.schema.json`
+    /// (or `mise run schema:gen`) if this fails.
+    #[test]
+    fn committed_schema_matches_status_field() {
+        let generated = serde_json::to_string_pretty(&status_field_schema()).unwrap();
+        let committed = include_str!("../../../schema/status-field.schema.json");
+        assert_eq!(
+            generated.trim_end(),
+            committed.trim_end(),
+            "schema/status-field.schema.json is stale — regenerate with \
+             `netcheck schema > schema/status-field.schema.json` (or `mise run schema:gen`) \
+             and commit the result"
+        );
+    }
+
     #[test]
     fn confidence_only_runs_without_the_full_snapshot() {
         // Smoke test: confidence_only() must compile, run to completion, and
