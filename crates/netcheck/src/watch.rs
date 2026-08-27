@@ -63,6 +63,23 @@ fn interval_for(intervals: Intervals, health: u8) -> Duration {
     }
 }
 
+/// What the poll thread should fire (if anything) on one loop iteration,
+/// given whether it was enabled on the previous iteration and is enabled on
+/// this one. `None` means don't fire (and idle-sleep instead). Pulled out of
+/// the poll loop so the false -> true transition (which must always produce
+/// `Full`, not just the thread's very first iteration) is unit-testable
+/// without spinning up real threads/timers.
+fn scope_for_poll_tick(was_enabled: bool, is_enabled: bool) -> Option<CheckScope> {
+    if !is_enabled {
+        return None;
+    }
+    Some(if was_enabled {
+        CheckScope::ConfidenceOnly
+    } else {
+        CheckScope::Full
+    })
+}
+
 /// Spawns the config-change watcher and the adaptive-poll thread, both
 /// gated on `enabled`: while `false`, neither one calls `fire`, matching the
 /// existing "only manual refresh" behavior when auto-refresh is off. The
@@ -102,25 +119,61 @@ pub fn spawn_watch_trigger(
     };
 
     let poll_thread = std::thread::spawn(move || {
-        let mut first_fire = true;
+        // Reset whenever `enabled` transitions false -> true, not just once
+        // for the thread's whole lifetime — a user toggling auto-refresh
+        // off and back on needs a fresh `Full` fire, since a real network
+        // change during the "off" window (dropped by both this thread and
+        // the config-change watcher, which are gated on `enabled` too)
+        // would otherwise go unnoticed until the next poll tick after that.
+        let mut was_enabled = false;
         loop {
-            if enabled.load(Ordering::Relaxed) {
-                let scope = if first_fire {
-                    CheckScope::Full
-                } else {
-                    CheckScope::ConfidenceOnly
-                };
-                first_fire = false;
-                fire(scope);
-                std::thread::sleep(interval_for(intervals, health.load(Ordering::Relaxed)));
-            } else {
-                std::thread::sleep(IDLE_POLL_INTERVAL);
+            let is_enabled = enabled.load(Ordering::Relaxed);
+            match scope_for_poll_tick(was_enabled, is_enabled) {
+                Some(scope) => {
+                    fire(scope);
+                    std::thread::sleep(interval_for(intervals, health.load(Ordering::Relaxed)));
+                }
+                None => std::thread::sleep(IDLE_POLL_INTERVAL),
             }
+            was_enabled = is_enabled;
         }
     });
 
     WatchTrigger {
         _sc_handle: sc_handle,
         _poll_thread: poll_thread,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_iteration_fires_full() {
+        assert_eq!(scope_for_poll_tick(false, true), Some(CheckScope::Full));
+    }
+
+    #[test]
+    fn subsequent_enabled_iterations_fire_confidence_only() {
+        assert_eq!(
+            scope_for_poll_tick(true, true),
+            Some(CheckScope::ConfidenceOnly)
+        );
+    }
+
+    #[test]
+    fn disabled_iterations_dont_fire() {
+        assert_eq!(scope_for_poll_tick(false, false), None);
+        assert_eq!(scope_for_poll_tick(true, false), None);
+    }
+
+    #[test]
+    fn re_enabling_after_being_disabled_fires_full_again() {
+        // The bug this guards against: a stale "already fired once" flag
+        // that never resets on re-enable would give ConfidenceOnly here
+        // instead of Full, silently dropping the one-time full recheck a
+        // user re-enabling auto-refresh expects.
+        assert_eq!(scope_for_poll_tick(false, true), Some(CheckScope::Full));
     }
 }
