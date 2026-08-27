@@ -225,16 +225,19 @@ fn identity_from_output(stdout: &[u8]) -> WifiIdentity {
 
 /// The combined snapshot `netcheck wifi`/`netcheck status` report — SSID
 /// and connected-state from `system_profiler`, everything else natively
-/// from CoreWLAN. For streaming (`collect_streaming`), `wifi_identity` and
-/// `wifi_radio` run as independent probes instead, so the fast CoreWLAN
-/// fields don't wait on the slow `system_profiler` call.
+/// from CoreWLAN. Runs `wifi_identity` (slow, ~1s) and `wifi_radio` (fast,
+/// no shell-out) concurrently, the same split `collect_streaming` uses, so
+/// this takes roughly as long as the slower probe instead of their sum.
 pub fn wifi_status() -> WifiStatus {
-    let identity = wifi_identity();
+    let (identity, radio) = std::thread::scope(|scope| {
+        let radio_handle = scope.spawn(wifi_radio);
+        let identity = wifi_identity();
+        (identity, radio_handle.join().unwrap())
+    });
     if !identity.connected {
         return WifiStatus::default();
     }
 
-    let radio = wifi_radio();
     WifiStatus {
         connected: identity.connected,
         ssid: identity.ssid,
