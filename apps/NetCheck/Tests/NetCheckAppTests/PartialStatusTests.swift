@@ -61,33 +61,33 @@ struct PartialNetworkStatusTests {
 
     @Test func hasAnyIsTrueAfterMergingAField() {
         var status = PartialNetworkStatus()
-        status.merge(envelope(splitDns: true))
+        status.merge(envelope(splitDns: true), generation: 0)
         #expect(status.hasAny)
     }
 
     @Test func mergeSetsFieldFromEnvelope() {
         var status = PartialNetworkStatus()
-        status.merge(envelope(splitDns: true))
+        status.merge(envelope(splitDns: true), generation: 0)
         #expect(status.splitDns == true)
     }
 
     @Test func mergeLeavesUnrelatedFieldsUntouched() {
         var status = PartialNetworkStatus()
-        status.merge(envelope(splitDns: true))
+        status.merge(envelope(splitDns: true), generation: 0)
         #expect(status.vpn == nil)
     }
 
     @Test func mergeDoesNotBlankAPreviouslySetFieldToNil() {
         var status = PartialNetworkStatus()
-        status.merge(envelope(splitDns: true))
-        status.merge(envelope(splitDns: nil))
+        status.merge(envelope(splitDns: true), generation: 0)
+        status.merge(envelope(splitDns: nil), generation: 0)
         #expect(status.splitDns == true)
     }
 
     @Test func mergeOverwritesWithNewValue() {
         var status = PartialNetworkStatus()
-        status.merge(envelope(splitDns: true))
-        status.merge(envelope(splitDns: false))
+        status.merge(envelope(splitDns: true), generation: 0)
+        status.merge(envelope(splitDns: false), generation: 0)
         #expect(status.splitDns == false)
     }
 
@@ -96,7 +96,7 @@ struct PartialNetworkStatusTests {
         let json: [String: Any] = ["CaptivePortal": "Detected"]
         let data = try! JSONSerialization.data(withJSONObject: json)
         let envelope = try! JSONDecoder().decode(StatusFieldEnvelope.self, from: data)
-        status.merge(envelope)
+        status.merge(envelope, generation: 0)
         #expect(status.captivePortal == .detected)
     }
 
@@ -115,26 +115,52 @@ struct PartialNetworkStatusTests {
         var status = PartialNetworkStatus()
         status.merge(decode([
             "Ping": ["group": "Reachability", "result": ["target": "1.1.1.1", "reachable": true, "rtt_ms": 12.0]],
-        ]))
+        ]), generation: 1)
         status.merge(decode([
             "Ping": ["group": "Reachability", "result": ["target": "8.8.8.8", "reachable": true, "rtt_ms": 8.0]],
-        ]))
+        ]), generation: 1)
         #expect(status.reachability.map(\.target) == ["1.1.1.1", "8.8.8.8"])
 
         // A later result for the same target replaces it in place rather
         // than appending a duplicate or reordering the list.
         status.merge(decode([
             "Ping": ["group": "Reachability", "result": ["target": "1.1.1.1", "reachable": false, "rtt_ms": NSNull()]],
-        ]))
+        ]), generation: 2)
         #expect(status.reachability.map(\.target) == ["1.1.1.1", "8.8.8.8"])
         #expect(status.reachability.first?.reachable == false)
+    }
+
+    @Test func isPendingTracksWhichRowsAGenerationHasNotYetUpdated() {
+        var status = PartialNetworkStatus()
+        status.merge(decode([
+            "Ping": ["group": "Reachability", "result": ["target": "1.1.1.1", "reachable": true, "rtt_ms": 12.0]],
+        ]), generation: 1)
+        status.merge(decode([
+            "Ping": ["group": "Reachability", "result": ["target": "8.8.8.8", "reachable": true, "rtt_ms": 8.0]],
+        ]), generation: 1)
+
+        // A row never touched, or touched only by an older generation, is
+        // pending as of a newer one.
+        #expect(status.isPending("reachability:1.1.1.1", asOf: 2))
+        #expect(status.isPending("reachability:9.9.9.9", asOf: 2))
+        // Not pending as of the generation that actually updated it (or any
+        // older one).
+        #expect(!status.isPending("reachability:1.1.1.1", asOf: 1))
+
+        // Once generation 2's own result lands, that row stops being
+        // pending as of 2 — independent of sibling rows still waiting.
+        status.merge(decode([
+            "Ping": ["group": "Reachability", "result": ["target": "1.1.1.1", "reachable": true, "rtt_ms": 11.0]],
+        ]), generation: 2)
+        #expect(!status.isPending("reachability:1.1.1.1", asOf: 2))
+        #expect(status.isPending("reachability:8.8.8.8", asOf: 2))
     }
 
     @Test func mergeIgnoresPingUpdatesForGroupsThisUIDoesNotSurface() {
         var status = PartialNetworkStatus()
         status.merge(decode([
             "Ping": ["group": "GatewayReachability", "result": ["target": "10.0.0.1", "reachable": true, "rtt_ms": 1.0]],
-        ]))
+        ]), generation: 0)
         #expect(status.reachability.isEmpty)
         #expect(status.reachabilityV6.isEmpty)
     }
@@ -142,7 +168,7 @@ struct PartialNetworkStatusTests {
     @Test func mergeMarksGroupComplete() {
         var status = PartialNetworkStatus()
         #expect(status.completedGroups.isEmpty)
-        status.merge(decode(["GroupComplete": "Reachability"]))
+        status.merge(decode(["GroupComplete": "Reachability"]), generation: 0)
         #expect(status.completedGroups == [.reachability])
     }
 }

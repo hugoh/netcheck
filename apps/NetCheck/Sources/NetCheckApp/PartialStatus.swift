@@ -78,6 +78,13 @@ struct PartialNetworkStatus {
     /// tracked for the four groups `confidence` needs a completeness signal
     /// for (see `StatusFieldEnvelope.groupComplete`).
     var completedGroups: Set<ProbeGroup> = []
+    /// The `merge` generation each reachability/resolution row last got a
+    /// fresh value at, keyed by `"<group>:<target>"` — lets the UI show a
+    /// spinner next to a specific row still waiting on the refresh in
+    /// progress, instead of just a single global "refreshing" indicator.
+    /// Not tracked for single-value fields or the groups this UI doesn't
+    /// render (gateway/nameserver reachability).
+    private(set) var rowGeneration: [String: Int] = [:]
 
     var hasAny: Bool {
         interfaces != nil || vpn != nil || resolvers != nil || splitDns != nil
@@ -86,26 +93,55 @@ struct PartialNetworkStatus {
             || wifiRadio != nil || ipStack != nil || captivePortal != nil
     }
 
+    /// True if `key`'s row hasn't been refreshed as recently as `generation`
+    /// — i.e. it's still showing a value from before the in-progress
+    /// refresh started. Keys are `"<group>:<target>"`, e.g.
+    /// `"reachability:1.1.1.1"` or `"resolution:google.com"`.
+    func isPending(_ key: String, asOf generation: Int) -> Bool {
+        (rowGeneration[key] ?? -1) < generation
+    }
+
     /// Replaces the entry in `list` matching `item` by `key`, or appends it
     /// if no entry matches — keeps a target's position stable across
-    /// re-runs instead of the list reshuffling every refresh.
-    private func upsert<T>(_ list: inout [T], _ item: T, key: (T) -> String) {
+    /// re-runs instead of the list reshuffling every refresh. Also records
+    /// `generation` as this row's freshness stamp for `isPending`. A static
+    /// function taking both `inout` params explicitly, rather than a
+    /// mutating method on `self` also reaching for `&self.reachability`
+    /// etc. — the latter is an exclusivity violation (mutating self while
+    /// holding an inout to one of its own stored properties).
+    private static func upsert<T>(
+        _ list: inout [T],
+        _ rowGeneration: inout [String: Int],
+        _ item: T,
+        key: (T) -> String,
+        rowKey: String,
+        generation: Int
+    ) {
         if let idx = list.firstIndex(where: { key($0) == key(item) }) {
             list[idx] = item
         } else {
             list.append(item)
         }
+        rowGeneration[rowKey] = generation
     }
 
-    mutating func merge(_ envelope: StatusFieldEnvelope) {
+    /// `generation` is the caller's own refresh-attempt counter (see
+    /// `StatusFetcher.refreshGeneration`) — not part of the wire format,
+    /// just stamped onto each row locally so `isPending` can tell "updated
+    /// before this refresh started" from "updated by it".
+    mutating func merge(_ envelope: StatusFieldEnvelope, generation: Int) {
         if let v = envelope.interfaces { interfaces = v }
         if let v = envelope.vpn { vpn = v }
         if let v = envelope.resolvers { resolvers = v }
         if let v = envelope.splitDns { splitDns = v }
         if let v = envelope.ping {
             switch v.group {
-            case .reachability: upsert(&reachability, v.result, key: { $0.target })
-            case .reachabilityV6: upsert(&reachabilityV6, v.result, key: { $0.target })
+            case .reachability:
+                Self.upsert(&reachability, &rowGeneration, v.result, key: { $0.target },
+                            rowKey: "reachability:\(v.result.target)", generation: generation)
+            case .reachabilityV6:
+                Self.upsert(&reachabilityV6, &rowGeneration, v.result, key: { $0.target },
+                            rowKey: "reachabilityV6:\(v.result.target)", generation: generation)
             case .gatewayReachability, .nameserverReachability:
                 break // not surfaced in this UI
             case .domainReachability, .nameserverConnect, .resolution:
@@ -113,10 +149,12 @@ struct PartialNetworkStatus {
             }
         }
         if let v = envelope.connect, v.group == .domainReachability {
-            upsert(&domainReachability, v.result, key: { $0.target })
+            Self.upsert(&domainReachability, &rowGeneration, v.result, key: { $0.target },
+                        rowKey: "domainReachability:\(v.result.target)", generation: generation)
         }
         if let v = envelope.resolution {
-            upsert(&resolution, v, key: { $0.domain })
+            Self.upsert(&resolution, &rowGeneration, v, key: { $0.domain },
+                        rowKey: "resolution:\(v.domain)", generation: generation)
         }
         if let g = envelope.groupComplete { completedGroups.insert(g) }
         if let v = envelope.proxy { proxy = v }

@@ -11,6 +11,7 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use std::collections::HashMap;
 use std::io::{self, Stdout};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
@@ -23,6 +24,45 @@ use std::time::{Duration, Instant};
 /// bugs did by hand-writing `format!("{:<N} ", ...)` at each call site.
 fn pad_col(text: &str, width: usize) -> String {
     format!("{text:<width$} ")
+}
+
+/// Key for `row_generation`, identifying one reachability/resolution row
+/// across refreshes — `None` for anything that isn't a per-target field
+/// (single-value `StatusField`s don't get row-level pending tracking, only
+/// a global "refreshing" indicator).
+fn row_key(field: &StatusField) -> Option<String> {
+    match field {
+        StatusField::Ping { group, result } => Some(format!("{group:?}:{}", result.target)),
+        StatusField::Connect { group, result } => Some(format!("{group:?}:{}", result.target)),
+        StatusField::Resolution(result) => Some(format!("Resolution:{}", result.domain)),
+        _ => None,
+    }
+}
+
+const SPINNER_FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+/// What a reachability/resolution row needs to decide "is this specific row
+/// still showing a value from before the current manual refresh started" —
+/// see `row_key`. Mirrors `PartialNetworkStatus.isPending` in the SwiftUI
+/// app: gated on `refreshing` so a row nothing has touched yet (e.g. right
+/// after launch) reads as the normal empty/collecting state, not "pending
+/// forever".
+struct PendingCtx<'a> {
+    row_generation: &'a HashMap<String, u64>,
+    current_generation: u64,
+    refreshing: bool,
+    spinner_frame: usize,
+}
+
+impl PendingCtx<'_> {
+    fn is_pending(&self, key: &str) -> bool {
+        self.refreshing
+            && self.row_generation.get(key).copied().unwrap_or(0) < self.current_generation
+    }
+
+    fn spinner(&self) -> char {
+        SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()]
+    }
 }
 
 /// Formats an elapsed duration as "now" under 3s, seconds under a minute,
@@ -129,7 +169,13 @@ fn run_and_forward(
 fn spawn_workers(
     auto_refresh: Arc<AtomicBool>,
     health: Arc<AtomicU8>,
-) -> (mpsc::Receiver<StatusField>, mpsc::Sender<()>, WatchTrigger) {
+    refreshing: Arc<AtomicBool>,
+) -> (
+    mpsc::Receiver<StatusField>,
+    mpsc::Sender<()>,
+    WatchTrigger,
+    Arc<AtomicU64>,
+) {
     let (tx, rx) = mpsc::channel();
     let (manual_tx, manual_rx) = mpsc::channel::<()>();
     let generation = Arc::new(AtomicU64::new(0));
@@ -140,7 +186,13 @@ fn spawn_workers(
         std::thread::spawn(move || {
             for () in manual_rx {
                 let this_gen = generation.fetch_add(1, Ordering::SeqCst) + 1;
+                refreshing.store(true, Ordering::Relaxed);
                 run_and_forward(&tx, &generation, this_gen, CheckScope::Full);
+                // Always clear, even if this run was itself superseded by a
+                // newer one (e.g. a background poll firing mid-refresh):
+                // either way this manual request is done being handled —
+                // superseded just means something even fresher is coming.
+                refreshing.store(false, Ordering::Relaxed);
             }
         });
     }
@@ -156,7 +208,7 @@ fn spawn_workers(
     let trigger = watch::spawn_watch_trigger(auto_refresh, health, watch::Intervals::default(), fire)
         .expect("failed to start config-change watcher");
 
-    (rx, manual_tx, trigger)
+    (rx, manual_tx, trigger, generation)
 }
 
 fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
@@ -341,19 +393,30 @@ fn dns_list(resolvers: Option<&[netstatus::Resolver]>) -> List<'static> {
     )
 }
 
-fn ping_list(title: &'static str, results: &[netstatus::PingResult]) -> List<'static> {
+fn ping_list(
+    title: &'static str,
+    results: &[netstatus::PingResult],
+    group: &str,
+    ctx: &PendingCtx,
+) -> List<'static> {
     let items: Vec<ListItem> = results
         .iter()
         .map(|p| {
-            let color = if p.reachable {
+            let pending = ctx.is_pending(&format!("{group}:{}", p.target));
+            let color = if pending {
+                Color::DarkGray
+            } else if p.reachable {
                 Color::Green
             } else {
                 Color::Red
             };
-            let rtt = p
-                .rtt_ms
-                .map(|ms| format!("{ms:.1} ms"))
-                .unwrap_or_else(|| "timeout".to_string());
+            let rtt = if pending {
+                format!("{} refreshing", ctx.spinner())
+            } else {
+                p.rtt_ms
+                    .map(|ms| format!("{ms:.1} ms"))
+                    .unwrap_or_else(|| "timeout".to_string())
+            };
             ListItem::new(Line::from(vec![
                 Span::styled(pad_col(&p.target, 20), Style::default().fg(color)),
                 Span::raw(rtt),
@@ -363,19 +426,30 @@ fn ping_list(title: &'static str, results: &[netstatus::PingResult]) -> List<'st
     List::new(items).block(Block::default().borders(Borders::ALL).title(title))
 }
 
-fn connect_list(title: &'static str, results: &[netstatus::ConnectResult]) -> List<'static> {
+fn connect_list(
+    title: &'static str,
+    results: &[netstatus::ConnectResult],
+    group: &str,
+    ctx: &PendingCtx,
+) -> List<'static> {
     let items: Vec<ListItem> = results
         .iter()
         .map(|c| {
-            let color = if c.reachable {
+            let pending = ctx.is_pending(&format!("{group}:{}", c.target));
+            let color = if pending {
+                Color::DarkGray
+            } else if c.reachable {
                 Color::Green
             } else {
                 Color::Red
             };
-            let rtt = c
-                .rtt_ms
-                .map(|ms| format!("{ms:.1} ms"))
-                .unwrap_or_else(|| "unreachable".to_string());
+            let rtt = if pending {
+                format!("{} refreshing", ctx.spinner())
+            } else {
+                c.rtt_ms
+                    .map(|ms| format!("{ms:.1} ms"))
+                    .unwrap_or_else(|| "unreachable".to_string())
+            };
             ListItem::new(Line::from(vec![
                 Span::styled(pad_col(&c.target, 20), Style::default().fg(color)),
                 Span::raw(format!(":{}  {}", c.port, rtt)),
@@ -385,15 +459,24 @@ fn connect_list(title: &'static str, results: &[netstatus::ConnectResult]) -> Li
     List::new(items).block(Block::default().borders(Borders::ALL).title(title))
 }
 
-fn resolution_list(resolution: &[netstatus::ResolutionResult]) -> List<'static> {
+fn resolution_list(resolution: &[netstatus::ResolutionResult], ctx: &PendingCtx) -> List<'static> {
     let items: Vec<ListItem> = if resolution.is_empty() {
         vec![ListItem::new("Collecting...")]
     } else {
         resolution
             .iter()
             .map(|r| {
-                let color = if r.resolved { Color::Green } else { Color::Red };
-                let detail = if r.resolved {
+                let pending = ctx.is_pending(&format!("Resolution:{}", r.domain));
+                let color = if pending {
+                    Color::DarkGray
+                } else if r.resolved {
+                    Color::Green
+                } else {
+                    Color::Red
+                };
+                let detail = if pending {
+                    format!("{} refreshing", ctx.spinner())
+                } else if r.resolved {
                     format!(
                         "{}  ({})",
                         r.duration_ms
@@ -529,6 +612,7 @@ fn draw(
     active_tab: Tab,
     last_updated: Option<Instant>,
     auto_refresh: bool,
+    ctx: &PendingCtx,
 ) -> io::Result<()> {
     terminal.draw(|frame| {
         let area = frame.area();
@@ -592,7 +676,7 @@ fn draw(
                         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
                         .split(rows[1]);
                     frame.render_widget(dns_list(status.resolvers.as_deref()), cols[0]);
-                    frame.render_widget(resolution_list(&status.resolution), cols[1]);
+                    frame.render_widget(resolution_list(&status.resolution, ctx), cols[1]);
                 }
                 Tab::Reachability => {
                     let cols = Layout::default()
@@ -604,17 +688,24 @@ fn draw(
                         ])
                         .split(rows[1]);
                     frame.render_widget(
-                        ping_list("Reachability (IPv4)", &status.reachability),
+                        ping_list("Reachability (IPv4)", &status.reachability, "Reachability", ctx),
                         cols[0],
                     );
                     frame.render_widget(
-                        ping_list("Reachability (IPv6)", &status.reachability_v6),
+                        ping_list(
+                            "Reachability (IPv6)",
+                            &status.reachability_v6,
+                            "ReachabilityV6",
+                            ctx,
+                        ),
                         cols[1],
                     );
                     frame.render_widget(
                         connect_list(
                             "Reachability (domains, TCP:443)",
                             &status.domain_reachability,
+                            "DomainReachability",
+                            ctx,
                         ),
                         cols[2],
                     );
@@ -640,6 +731,12 @@ fn draw(
             format!("{confidence_text}   "),
             Style::default().fg(confidence_color),
         )];
+        if ctx.refreshing {
+            footer_spans.push(Span::styled(
+                format!("{} refreshing   ", ctx.spinner()),
+                Style::default().fg(Color::Cyan),
+            ));
+        }
         if status.captive_portal == Some(netstatus::CaptivePortalStatus::Detected) {
             footer_spans.push(Span::styled(
                 "Captive portal detected   ",
@@ -660,14 +757,21 @@ pub fn run() -> io::Result<()> {
     let mut terminal = setup_terminal()?;
     let auto_refresh = Arc::new(AtomicBool::new(true));
     let health = Arc::new(AtomicU8::new(watch::HEALTHY));
-    let (rx, manual_tx, _trigger) = spawn_workers(auto_refresh.clone(), health.clone());
+    let refreshing = Arc::new(AtomicBool::new(false));
+    let (rx, manual_tx, _trigger, generation) =
+        spawn_workers(auto_refresh.clone(), health.clone(), refreshing.clone());
     let mut status = netstatus::PartialStatus::default();
+    let mut row_generation: HashMap<String, u64> = HashMap::new();
     let mut last_updated: Option<Instant> = None;
     let mut active_tab = Tab::Overview;
+    let mut spinner_frame: usize = 0;
 
     let result = (|| -> io::Result<()> {
         loop {
             while let Ok(field) = rx.try_recv() {
+                if let Some(key) = row_key(&field) {
+                    row_generation.insert(key, generation.load(Ordering::SeqCst));
+                }
                 status.merge(field);
                 last_updated = Some(Instant::now());
             }
@@ -679,12 +783,20 @@ pub fn run() -> io::Result<()> {
                 );
             }
 
+            spinner_frame = spinner_frame.wrapping_add(1);
+            let ctx = PendingCtx {
+                row_generation: &row_generation,
+                current_generation: generation.load(Ordering::SeqCst),
+                refreshing: refreshing.load(Ordering::Relaxed),
+                spinner_frame,
+            };
             draw(
                 &mut terminal,
                 &status,
                 active_tab,
                 last_updated,
                 auto_refresh.load(Ordering::Relaxed),
+                &ctx,
             )?;
 
             if event::poll(Duration::from_millis(200))?

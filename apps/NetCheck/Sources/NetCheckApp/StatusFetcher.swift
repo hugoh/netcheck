@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Runs the `netcheck` CLI's `stream`/`watch` subcommands and decodes their
@@ -14,11 +15,22 @@ final class StatusFetcher: ObservableObject {
     @Published var lastUpdated: Date?
     @Published var autoRefreshEnabled = true
     @Published var errorMessage: String?
+    /// True for the duration of a manual (⌘R) refresh — visible proof the
+    /// refresh actually ran, since two consecutive refreshes on a stable
+    /// network can otherwise look identical (nothing else in the UI
+    /// changes). Not raised for the background `watch` auto-refresh, which
+    /// shouldn't visually interrupt the user for routine polling.
+    @Published var isRefreshing = false
 
     private var refreshTask: Task<Void, Never>?
-    private var refreshGeneration = 0
+    /// Bumped on every manual refresh; used both to cancel a superseded
+    /// `refresh()` task and, via `PartialNetworkStatus.rowGeneration`, to
+    /// tell the view which reachability/resolution rows the in-progress
+    /// refresh hasn't updated yet (see `PartialNetworkStatus.isPending`).
+    private(set) var refreshGeneration = 0
     private var watchTask: Task<Void, Never>?
     private let binaryURL: URL?
+    private var terminationObserver: NSObjectProtocol?
 
     init() {
         binaryURL = Self.locateBinary()
@@ -28,6 +40,27 @@ final class StatusFetcher: ObservableObject {
         // starting it directly avoids running two independent full
         // collections at startup.
         startWatching()
+
+        // Without this, quitting the app leaves its `netcheck watch`
+        // subprocess running indefinitely — Process()-spawned children
+        // aren't killed automatically when the parent exits on macOS, they
+        // just get reparented to launchd. Cancelling the tasks here tears
+        // down their subprocesses via streamLines' `continuation.onTermination`.
+        // Done synchronously (via `assumeIsolated`, safe since `queue: .main`
+        // guarantees this closure already runs on the main thread) rather
+        // than spawning a new `Task` — the app process can exit right after
+        // this notification returns, with no guarantee an async Task gets
+        // scheduled before that happens.
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.refreshTask?.cancel()
+                self?.watchTask?.cancel()
+            }
+        }
     }
 
     func toggleAutoRefresh() {
@@ -61,7 +94,7 @@ final class StatusFetcher: ObservableObject {
                     guard let envelope = try? decoder.decode(StatusFieldEnvelope.self, from: data) else {
                         continue
                     }
-                    status.merge(envelope)
+                    status.merge(envelope, generation: refreshGeneration)
                     lastUpdated = Date()
                     errorMessage = nil
                 }
@@ -83,6 +116,7 @@ final class StatusFetcher: ObservableObject {
         refreshTask?.cancel()
         refreshGeneration += 1
         let generation = refreshGeneration
+        isRefreshing = true
         refreshTask = Task {
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -94,7 +128,7 @@ final class StatusFetcher: ObservableObject {
                     guard let envelope = try? decoder.decode(StatusFieldEnvelope.self, from: data) else {
                         continue
                     }
-                    status.merge(envelope)
+                    status.merge(envelope, generation: generation)
                     lastUpdated = Date()
                     errorMessage = nil
                 }
@@ -103,6 +137,9 @@ final class StatusFetcher: ObservableObject {
             } catch {
                 guard generation == refreshGeneration else { return }
                 errorMessage = "Failed to run netcheck: \(error.localizedDescription)"
+            }
+            if generation == refreshGeneration {
+                isRefreshing = false
             }
         }
     }

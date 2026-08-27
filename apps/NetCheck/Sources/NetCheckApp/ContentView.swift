@@ -108,7 +108,11 @@ struct ContentView: View {
                     Label {
                         Text("Refresh  ") + Text("⌘R").foregroundColor(.gray)
                     } icon: {
-                        Image(systemName: "arrow.clockwise")
+                        if fetcher.isRefreshing {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
                     }
                 }
                 .keyboardShortcut("r", modifiers: [.command])
@@ -123,6 +127,11 @@ struct ContentView: View {
             if let confidence = fetcher.status.confidence {
                 Label(confidence.label, systemImage: confidence.icon)
                     .foregroundStyle(confidence.color)
+            }
+
+            if fetcher.isRefreshing {
+                Label("Refreshing", systemImage: "arrow.triangle.2.circlepath")
+                    .foregroundStyle(.cyan)
             }
 
             Text(Self.appVersion)
@@ -172,6 +181,26 @@ struct ContentView: View {
         }
         .opacity(0)
         .frame(width: 0, height: 0)
+    }
+
+    /// True while a manual refresh is in flight and `key`'s row hasn't
+    /// gotten this refresh's fresh value yet — see
+    /// `PartialNetworkStatus.isPending`. Gated on `isRefreshing` so a row
+    /// that's simply never been touched by *any* refresh (e.g. right after
+    /// launch) doesn't read as "pending forever": it shows the normal
+    /// collecting/empty state instead until the first refresh actually
+    /// starts.
+    private func isPending(_ key: String) -> Bool {
+        fetcher.isRefreshing && fetcher.status.isPending(key, asOf: fetcher.refreshGeneration)
+    }
+
+    @ViewBuilder
+    private func statusOrSpinner(ok: Bool, pending: Bool) -> some View {
+        if pending {
+            ProgressView().controlSize(.small)
+        } else {
+            StatusIcon(ok: ok)
+        }
     }
 
     private func moveTab(by offset: Int) {
@@ -323,7 +352,7 @@ struct ContentView: View {
                 } else {
                     List(status.resolution) { r in
                         HStack {
-                            StatusIcon(ok: r.resolved)
+                            statusOrSpinner(ok: r.resolved, pending: isPending("resolution:\(r.domain)"))
                             Text(r.domain)
                             Spacer()
                             Text(r.durationMs.map { String(format: "%.1f ms", $0) } ?? "")
@@ -342,10 +371,10 @@ struct ContentView: View {
     private func reachabilityTab(_ status: PartialNetworkStatus) -> some View {
         HStack(alignment: .top, spacing: 12) {
             PanelBox(title: "Reachability (IPv4)") {
-                pingList(status.reachability)
+                pingList(status.reachability, group: "reachability")
             }
             PanelBox(title: "Reachability (IPv6)") {
-                pingList(status.reachabilityV6)
+                pingList(status.reachabilityV6, group: "reachabilityV6")
             }
             PanelBox(title: "Reachability (domains, TCP:443)") {
                 if status.domainReachability.isEmpty {
@@ -353,7 +382,7 @@ struct ContentView: View {
                 } else {
                     List(status.domainReachability) { c in
                         HStack {
-                            StatusIcon(ok: c.reachable)
+                            statusOrSpinner(ok: c.reachable, pending: isPending("domainReachability:\(c.target)"))
                             Text(c.target)
                             Spacer()
                             Text(c.rttMs.map { String(format: "%.1f ms", $0) } ?? "unreachable")
@@ -368,13 +397,13 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func pingList(_ results: [PingResult]) -> some View {
+    private func pingList(_ results: [PingResult], group: String) -> some View {
         if results.isEmpty {
             CollectingPlaceholder()
         } else {
             List(results) { p in
                 HStack {
-                    StatusIcon(ok: p.reachable)
+                    statusOrSpinner(ok: p.reachable, pending: isPending("\(group):\(p.target)"))
                     Text(p.target)
                     Spacer()
                     Text(p.rttMs.map { String(format: "%.1f ms", $0) } ?? "timeout")
