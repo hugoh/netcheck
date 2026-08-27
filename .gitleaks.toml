@@ -1,0 +1,14 @@
+[extend]
+useDefault = true
+
+# `gitleaks dir`/`detect --no-git`-style filesystem scans aren't git-aware
+# and don't respect .gitignore, so without this they walk the full Rust
+# `target/` and Swift `apps/NetCheck/.build/` build output — multiple GB of
+# compiled artifacts, not source — making local `hk check`/`gitleaks dir`
+# runs take tens of seconds for no benefit (nothing secret-shaped lives in
+# build output that isn't already in the source that generated it).
+[allowlist]
+paths = [
+  '''target/''',
+  '''apps/NetCheck/\.build/''',
+]
