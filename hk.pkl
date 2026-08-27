@@ -11,7 +11,10 @@ min_hk_version = Base.min_hk_version
 // with the toolchain already present. hk's ubuntu `ci` profile stays
 // language-agnostic, and local hk hooks skip them too — run those mise
 // tasks directly (or let CI catch it) instead of waiting on them for every
-// commit/push.
+// commit/push. `check:swiftlint` is excluded for the same underlying
+// reason — it needs a Swift toolchain (SourceKit) that hk's ubuntu `ci`
+// runner doesn't have — even though, unlike cargo_*, it isn't slow; see
+// ci.yml's `check-macos` job instead.
 local linters = new Mapping<String, Step> {
     ...Base.base
     ...Base.shell

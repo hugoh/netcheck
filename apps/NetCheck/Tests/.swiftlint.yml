@@ -1,0 +1,4 @@
+# Nested config: test files reasonably use try! throughout (a decode/setup
+# failure in a test *should* crash that test, not be silently swallowed).
+disabled_rules:
+  - force_try

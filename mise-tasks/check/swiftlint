@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#MISE description="Lint Swift with SwiftLint"
+#MISE sources=["apps/NetCheck/Sources/**", "apps/NetCheck/Tests/**", ".swiftlint.yml", "apps/NetCheck/Tests/.swiftlint.yml"]
+#MISE outputs={auto=true}
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# SourceKitten (SwiftLint's syntax-analysis backend) doesn't find
+# sourcekitdInProc on a machine with only Command Line Tools installed (no
+# full Xcode.app) unless told exactly where to look — harmless to set even
+# where a full Xcode already resolves it correctly.
+export DYLD_FRAMEWORK_PATH="/Library/Developer/CommandLineTools/usr/lib:${DYLD_FRAMEWORK_PATH:-}"
+
+swiftlint lint "$ROOT_DIR/apps/NetCheck/Sources" "$ROOT_DIR/apps/NetCheck/Tests"

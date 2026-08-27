@@ -86,6 +86,8 @@ jobs:
           key: swift-build-${{ runner.os }}-${{ hashFiles('apps/NetCheck/Package.swift', 'apps/NetCheck/Package.resolved', 'apps/NetCheck/Sources/**', 'apps/NetCheck/Tests/**') }}
           restore-keys: |
             swift-build-${{ runner.os }}-
+      - name: SwiftLint
+        run: mise run check:swiftlint
       - name: Swift test
         run: mise run test:swift
 
