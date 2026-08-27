@@ -133,7 +133,7 @@ jobs:
     steps:
       - uses: hugoh/gh-workflows/setup@e3deb909891d6fc8089311f2e91e85796eb6c725 # v1.9.2
       - name: Build site
-        run: mise run pages-build
+        run: mise run build:pages
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0
         with:
