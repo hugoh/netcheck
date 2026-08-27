@@ -158,8 +158,35 @@ pub fn run_command(command: Command) {
                 healthy: std::time::Duration::from_secs(interval),
                 degraded: std::time::Duration::from_secs(degraded_interval),
             };
-            let _trigger = watch::spawn_watch_trigger(enabled, health, intervals, fire)
-                .expect("failed to start config-change watcher");
+            let fire = Arc::new(fire);
+            {
+                // Third caller of `fire`, alongside the config-change
+                // watcher and the poll thread: a caller that already knows
+                // this `watch` process is running (that's the whole point
+                // of sending it a command) wants an immediate check without
+                // waiting for the next poll/config-change — e.g. the
+                // SwiftUI app's manual refresh, writing a line to this
+                // process's stdin instead of spawning a second subprocess.
+                let fire = fire.clone();
+                std::thread::spawn(move || {
+                    for line in std::io::stdin().lines() {
+                        let Ok(line) = line else { break };
+                        // A malformed/unrecognized line is ignored, not
+                        // fatal — a stray line on stdin shouldn't kill the
+                        // watch process.
+                        if let Ok(netstatus::WatchCommand::Refresh) =
+                            serde_json::from_str::<netstatus::WatchCommand>(&line)
+                        {
+                            fire(watch::CheckScope::Full);
+                        }
+                    }
+                });
+            }
+            let _trigger = watch::spawn_watch_trigger(enabled, health, intervals, {
+                let fire = fire.clone();
+                move |scope| fire(scope)
+            })
+            .expect("failed to start config-change watcher");
             let mut stdout = std::io::stdout();
             for field in rx {
                 let _ = writeln!(

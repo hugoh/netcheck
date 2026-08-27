@@ -9,7 +9,7 @@ use crate::reachability::{self, PingResult};
 use crate::resolution::{self, DEFAULT_RESOLUTION_TARGETS, ResolutionResult};
 use crate::vpn::{self, VpnStatus};
 use crate::wifi::{self, WifiIdentity, WifiRadio, WifiStatus};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::mpsc;
 
 /// Well-known public IPs used for reachability probes: Cloudflare, Google,
@@ -277,6 +277,17 @@ pub enum ProbeGroup {
     /// `DEFAULT_RESOLUTION_TARGETS`).
     #[schemars(title = "Resolution")]
     Resolution,
+}
+
+/// A command the `watch` subcommand accepts as NDJSON on stdin (one per
+/// line), symmetric with the `StatusField` NDJSON it writes to stdout.
+/// `watch` running at all already means auto-refresh is enabled — there's
+/// no separate enable/disable command, just "trigger a check now" for a
+/// process the caller already knows is running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, schemars::JsonSchema)]
+pub enum WatchCommand {
+    /// Run a full check immediately, same as a config-change fire.
+    Refresh,
 }
 
 /// One probe's result, delivered as soon as that probe completes. For a
@@ -836,6 +847,35 @@ mod tests {
              `netcheck schema > schema/status-field.schema.json` (or `mise run schema:gen`) \
              and commit the result"
         );
+    }
+
+    #[test]
+    fn watch_command_refresh_decodes_from_the_documented_wire_shape() {
+        // A bare `"Refresh"` string is serde's canonical representation of
+        // a data-less enum variant (confirmed via `serde_json::to_string`
+        // — this is what StatusFetcher.swift sends) — guarded explicitly
+        // since nothing else exercises this deserialization path (unlike
+        // StatusField, which every `collect_streaming` test round-trips
+        // through JSON already).
+        let decoded: WatchCommand = serde_json::from_str(r#""Refresh""#).unwrap();
+        assert_eq!(decoded, WatchCommand::Refresh);
+    }
+
+    #[test]
+    fn watch_command_also_accepts_the_externally_tagged_object_form() {
+        // serde's deserializer is lenient for a data-less variant and
+        // accepts `{"Refresh":null}` too, matching StatusField's other
+        // (data-carrying) variants' shape — not what's documented as the
+        // canonical wire form, but worth guarding since nothing else would
+        // catch this leniency regressing.
+        let decoded: WatchCommand = serde_json::from_str(r#"{"Refresh":null}"#).unwrap();
+        assert_eq!(decoded, WatchCommand::Refresh);
+    }
+
+    #[test]
+    fn watch_command_rejects_unrecognized_input() {
+        assert!(serde_json::from_str::<WatchCommand>(r#"{"Bogus":null}"#).is_err());
+        assert!(serde_json::from_str::<WatchCommand>("not json").is_err());
     }
 
     #[test]
