@@ -34,8 +34,9 @@ fn ping_via_icmp(addr: IpAddr) -> Option<Duration> {
     })
 }
 
-/// Pings `target` once with a 1 second timeout. `target` must be a literal
-/// IPv4 or IPv6 address; an unparsable target is reported as unreachable.
+/// Pings `target` once, bounded to `PING_TIMEOUT` (3 seconds). `target`
+/// must be a literal IPv4 or IPv6 address; an unparsable target is reported
+/// as unreachable.
 pub fn ping(target: &str) -> PingResult {
     let rtt = target.parse::<IpAddr>().ok().and_then(ping_via_icmp);
 
