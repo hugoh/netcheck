@@ -185,6 +185,7 @@ struct ConnectionConfidenceTests {
         status.reachabilityV6 = [PingResult(target: "::1", reachable: false, rttMs: nil)]
         status.domainReachability = [ConnectResult(target: "example.com", port: 443, reachable: tcpOk, rttMs: nil)]
         status.completedGroups = [.resolution, .reachability, .reachabilityV6, .domainReachability]
+        status.captivePortal = .clear
         return status
     }
 
@@ -217,6 +218,7 @@ struct ConnectionConfidenceTests {
         status.reachabilityV6 = [PingResult(target: "::1", reachable: true, rttMs: nil)]
         status.domainReachability = [ConnectResult(target: "example.com", port: 443, reachable: false, rttMs: nil)]
         status.completedGroups = [.resolution, .reachability, .reachabilityV6, .domainReachability]
+        status.captivePortal = .clear
         #expect(status.confidence == .limited)
     }
 
@@ -226,6 +228,7 @@ struct ConnectionConfidenceTests {
         status.reachability = [PingResult(target: "1.1.1.1", reachable: true, rttMs: nil)]
         status.reachabilityV6 = [PingResult(target: "::1", reachable: true, rttMs: nil)]
         status.domainReachability = [ConnectResult(target: "example.com", port: 443, reachable: true, rttMs: nil)]
+        status.captivePortal = .clear
         #expect(status.confidence == nil, "no group has been marked complete yet")
 
         status.completedGroups.insert(.reachability)
@@ -233,5 +236,62 @@ struct ConnectionConfidenceTests {
 
         status.completedGroups.formUnion([.reachabilityV6, .resolution, .domainReachability])
         #expect(status.confidence == .online)
+    }
+
+    @Test func nilUntilCaptivePortalHasReported() {
+        var status = PartialNetworkStatus()
+        status.resolution = [ResolutionResult(domain: "example.com", resolved: true, addresses: [], durationMs: nil)]
+        status.reachability = [PingResult(target: "1.1.1.1", reachable: true, rttMs: nil)]
+        status.reachabilityV6 = [PingResult(target: "::1", reachable: false, rttMs: nil)]
+        status.domainReachability = [ConnectResult(target: "example.com", port: 443, reachable: true, rttMs: nil)]
+        status.completedGroups = [.resolution, .reachability, .reachabilityV6, .domainReachability]
+        #expect(status.confidence == nil, "captive-portal reading hasn't arrived yet, so the cap can't be applied")
+
+        status.captivePortal = .clear
+        #expect(status.confidence == .online)
+    }
+
+    @Test func cappedToLimitedWhenCaptivePortalDetected() {
+        var status = status(dnsOk: true, pingOk: true, tcpOk: true)
+        status.captivePortal = .detected
+        #expect(status.confidence == .limited, "a captive portal caps Online down to Limited")
+    }
+
+    @Test func captivePortalDetectedDoesNotRaiseLowerTiers() {
+        var status = status(dnsOk: true, pingOk: false, tcpOk: false)
+        status.captivePortal = .detected
+        #expect(status.confidence == .limited, "the cap only lowers Online; it doesn't raise Limited/Offline")
+
+        var offline = status
+        offline.resolution = [ResolutionResult(domain: "example.com", resolved: false, addresses: [], durationMs: nil)]
+        offline.captivePortal = .detected
+        #expect(offline.confidence == .offline)
+    }
+
+    @Test func majorityOfTargetsDeterminesEachCategory() {
+        var status = PartialNetworkStatus()
+        // 1-of-3 DNS targets resolved: not a majority, so DNS reads as not-ok
+        // even though one probe technically succeeded.
+        status.resolution = [
+            ResolutionResult(domain: "a.example.com", resolved: true, addresses: [], durationMs: nil),
+            ResolutionResult(domain: "b.example.com", resolved: false, addresses: [], durationMs: nil),
+            ResolutionResult(domain: "c.example.com", resolved: false, addresses: [], durationMs: nil),
+        ]
+        // 2-of-3 ping targets reachable: a majority, so ping reads as ok.
+        status.reachability = [
+            PingResult(target: "1.1.1.1", reachable: true, rttMs: nil),
+            PingResult(target: "8.8.8.8", reachable: true, rttMs: nil),
+            PingResult(target: "9.9.9.9", reachable: false, rttMs: nil),
+        ]
+        status.reachabilityV6 = []
+        status.domainReachability = [
+            ConnectResult(target: "a.example.com", port: 443, reachable: false, rttMs: nil),
+            ConnectResult(target: "b.example.com", port: 443, reachable: false, rttMs: nil),
+            ConnectResult(target: "c.example.com", port: 443, reachable: false, rttMs: nil),
+        ]
+        status.completedGroups = [.resolution, .reachability, .reachabilityV6, .domainReachability]
+        status.captivePortal = .clear
+        // Only ping is ok (1-of-3 categories) -> Limited.
+        #expect(status.confidence == .limited)
     }
 }

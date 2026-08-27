@@ -218,8 +218,18 @@ extension ConnectionConfidence {
     }
 }
 
+/// True if more than half of `results` satisfy `isOk`, mirroring Rust's
+/// `majority_ok` — a single lucky reply from an otherwise-unreachable
+/// target list shouldn't count as a category "working". Empty lists are
+/// never ok.
+private func majorityOk<T>(_ results: [T], _ isOk: (T) -> Bool) -> Bool {
+    let n = results.count
+    return n > 0 && results.filter(isOk).count * 2 > n
+}
+
 /// Rolls up whether DNS resolution, ICMP reachability, and TCP connect
-/// each had at least one success into a single confidence tier.
+/// each had a majority of their probed targets succeed into a single
+/// confidence tier, mirroring Rust's `confidence_from`.
 private func confidenceFrom(dnsOk: Bool, pingOk: Bool, tcpOk: Bool) -> ConnectionConfidence {
     switch [dnsOk, pingOk, tcpOk].filter({ $0 }).count {
     case 3, 2: return .online
@@ -228,17 +238,32 @@ private func confidenceFrom(dnsOk: Bool, pingOk: Bool, tcpOk: Bool) -> Connectio
     }
 }
 
+/// Caps `confidence` at `.limited` when `captivePortal` confirms a portal
+/// is present, mirroring Rust's `cap_for_captive_portal`. `.unknown` is not
+/// evidence of a portal, so it doesn't trigger the cap.
+private func capForCaptivePortal(
+    _ confidence: ConnectionConfidence,
+    _ captivePortal: CaptivePortalStatus
+) -> ConnectionConfidence {
+    if captivePortal == .detected && confidence == .online {
+        return .limited
+    }
+    return confidence
+}
+
 extension PartialNetworkStatus {
-    /// `nil` until resolution, both reachability probes, and domain
-    /// reachability have all *fully drained* (not just started arriving) —
-    /// a group still mid-stream would misreport confidence the same way a
-    /// missing category would.
+    /// `nil` until resolution, both reachability probes, domain
+    /// reachability, and the captive-portal probe have all *fully drained*
+    /// (not just started arriving) — a group still mid-stream would
+    /// misreport confidence the same way a missing category would, and a
+    /// missing captive-portal reading would skip the cap below.
     var confidence: ConnectionConfidence? {
         let requiredGroups: Set<ProbeGroup> = [.resolution, .reachability, .reachabilityV6, .domainReachability]
         guard requiredGroups.isSubset(of: completedGroups) else { return nil }
-        let dnsOk = resolution.contains { $0.resolved }
-        let pingOk = reachability.contains { $0.reachable } || reachabilityV6.contains { $0.reachable }
-        let tcpOk = domainReachability.contains { $0.reachable }
-        return confidenceFrom(dnsOk: dnsOk, pingOk: pingOk, tcpOk: tcpOk)
+        guard let captivePortal else { return nil }
+        let dnsOk = majorityOk(resolution) { $0.resolved }
+        let pingOk = majorityOk(reachability) { $0.reachable } || majorityOk(reachabilityV6) { $0.reachable }
+        let tcpOk = majorityOk(domainReachability) { $0.reachable }
+        return capForCaptivePortal(confidenceFrom(dnsOk: dnsOk, pingOk: pingOk, tcpOk: tcpOk), captivePortal)
     }
 }
