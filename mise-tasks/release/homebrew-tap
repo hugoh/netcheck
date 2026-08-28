@@ -2,13 +2,10 @@
 #MISE description="Publish/update the netcheck Formula and Cask"
 set -euo pipefail
 
-# Publishes/updates the "netcheck" Formula and "netcheck" Cask in
-# hugoh/homebrew-tap. Hand-rolled (not GoReleaser-generated like the Go
-# fleet's casks) since GoReleaser doesn't build Rust/Swift, but follows the
-# same on_macos/on_arm block structure as the existing casks there.
-# netcheck is a Formula (plain CLI binaries) while netcheck is also a Cask
-# (it installs NetCheck.app) — install with `brew install --cask netcheck`
-# to disambiguate.
+# Publishes/updates the "netcheck" Formula (the CLI binary) and "netcheck"
+# Cask (NetCheck.app) in hugoh/homebrew-tap. Install with
+# `brew install netcheck` for the CLI, `brew install --cask netcheck` for
+# the app.
 #
 # Usage: mise run release:homebrew-tap -- <version-without-v> <cli-tarball> <app-zip>
 # Requires TAP_GITHUB_TOKEN in the environment.

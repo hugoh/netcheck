@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+#MISE description="Compile NetStatus + both executables with warnings treated as errors"
+#MISE sources=["apps/NetCheck/Sources/**", "apps/NetCheck/Package.swift", "apps/NetCheck/Package.resolved"]
+#MISE outputs={auto=true}
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# Plain `swift build`, not `--build-tests`: the test targets pull in
+# swift-testing, which emits `'Test' is deprecated` warnings that
+# -warnings-as-errors would turn fatal. Test code is compiled by the
+# `test:swift` step instead.
+swift build --package-path "$ROOT_DIR/apps/NetCheck" -Xswiftc -warnings-as-errors

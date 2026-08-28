@@ -1,5 +1,5 @@
 /target
 .build/
+/site/favicon.png
 /site/screenshots/
 /site/index.html
-/site/favicon.png

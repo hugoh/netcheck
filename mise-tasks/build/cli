@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#MISE description="Build the release netcheck CLI binary"
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SWIFT_DIR="$ROOT_DIR/apps/NetCheck"
+
+(cd "$SWIFT_DIR" && swift build -c release --product netcheck)
+
+BIN="$SWIFT_DIR/.build/release/netcheck"
+echo "Built $BIN"
+"$BIN" --version

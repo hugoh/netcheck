@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+#MISE description="Render README.md into site/index.html (pandoc) and stage assets"
+#MISE sources=["README.md", "site/template.html", "site/style.css", "site/robots.txt", "site/sitemap.xml", "assets/icon-1024.png", "assets/screenshots/netcheck-app.png"]
+#MISE outputs=["site/index.html", "site/favicon.png", "site/screenshots/netcheck-app.png"]
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT_DIR"
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+# Point the README's GitHub-relative asset paths at where the site serves them.
+sed -e 's#assets/screenshots/#screenshots/#g' \
+	-e 's#assets/icon-1024\.png#favicon.png#g' \
+	README.md >"$WORK/readme.md"
+
+# The <title>/<meta description>: the first prose paragraph after the H1,
+# trimmed at the first em-dash so it stays a sentence.
+DESCRIPTION="$(
+	awk '
+		/^# / { seen_h1 = 1; next }
+		seen_h1 && NF { para = para (para ? " " : "") $0; next }
+		seen_h1 && para { print para; exit }
+	' README.md | sed 's/  */ /g; s/ — .*//'
+)"
+
+mkdir -p site/screenshots
+pandoc "$WORK/readme.md" \
+	--from gfm+alerts \
+	--to html5 \
+	--wrap=none \
+	--template site/template.html \
+	--metadata "description=${DESCRIPTION}" \
+	--output site/index.html
+
+cp assets/icon-1024.png site/favicon.png
+cp assets/screenshots/netcheck-app.png site/screenshots/netcheck-app.png
+
+echo "Rendered site/index.html"

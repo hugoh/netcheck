@@ -1,24 +1,22 @@
-amends "package://github.com/jdx/hk/releases/download/v1.56.0/hk@1.56.0#/Config.pkl"
-import "package://github.com/jdx/hk/releases/download/v1.56.0/hk@1.56.0#/Builtins.pkl"
+amends "package://github.com/jdx/hk/releases/download/v1.56.1/hk@1.56.1#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v1.56.1/hk@1.56.1#/Builtins.pkl"
 import "package://github.com/hugoh/hk-config/releases/download/v1.4.1/hk-config@1.4.1#/base.pkl" as Base
 
 min_hk_version = Base.min_hk_version
 
-// No cargo_* steps run through hk at all: they're slow (full Rust build/
-// dependency-graph work), and CI's macOS `check` job already runs them
-// directly via `mise run check:cargo-fmt`, `check:cargo-clippy`,
-// `check:cargo-deny`, `check:cargo-audit`, and `test:rust` (see ci.yml),
-// with the toolchain already present. hk's ubuntu `ci` profile stays
-// language-agnostic, and local hk hooks skip them too — run those mise
-// tasks directly (or let CI catch it) instead of waiting on them for every
-// commit/push.
+// Swift build/lint/format/test don't run through hk: `check:swiftlint`,
+// `check:swiftformat`, `check:periphery`, and `test:swift` need a Swift
+// toolchain (SourceKit) that hk's ubuntu `ci` runner doesn't have —
+// ci.yml's `check-macos` job runs them instead. hk's ubuntu `ci` profile
+// stays language-agnostic (rumdl/gitleaks/actionlint/typos/shellcheck/etc).
+// `mise run check` is the local aggregate that does include the Swift steps.
 local linters = new Mapping<String, Step> {
     ...Base.base
     ...Base.shell
     // Hashes scripts/gen_icon.swift + mise-tasks/icon/gen and compares
     // against assets/.icon-source.sha256 — pure cat/shasum, no swift/sips/
-    // iconutil, so unlike the cargo_* steps above this runs fine on ubuntu
-    // and doesn't need excluding from `ci`.
+    // iconutil, so it runs fine on ubuntu and doesn't need excluding from
+    // `ci`.
     ["icon"] = {
         glob = List("scripts/gen_icon.swift", "mise-tasks/icon/gen", "assets/.icon-source.sha256")
         check = "mise run check:icon"

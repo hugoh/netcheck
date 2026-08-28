@@ -1,10 +1,9 @@
 import Foundation
-import Testing
 @testable import NetCheckApp
+import Testing
 
-/// One entry of testdata/age-format-cases.json, shared with the Rust TUI's
-/// format_age tests so both UIs agree on the now/seconds/minutes/hours
-/// thresholds.
+/// One entry of testdata/age-format-cases.json — the now/seconds/minutes/
+/// hours threshold cases for `updatedAgoText`.
 private struct AgeFormatCase: Decodable {
     let seconds: TimeInterval
     let magnitude: Int
@@ -12,31 +11,41 @@ private struct AgeFormatCase: Decodable {
 
     var expectedText: String {
         switch unit {
-        case "now": return "Updated just now"
-        case "s": return "Updated \(magnitude) second\(magnitude == 1 ? "" : "s") ago"
-        case "m": return "Updated \(magnitude) minute\(magnitude == 1 ? "" : "s") ago"
-        case "h": return "Updated \(magnitude) hour\(magnitude == 1 ? "" : "s") ago"
+        case "now": "Updated just now"
+        case "s": "Updated \(magnitude) second\(magnitude == 1 ? "" : "s") ago"
+        case "m": "Updated \(magnitude) minute\(magnitude == 1 ? "" : "s") ago"
+        case "h": "Updated \(magnitude) hour\(magnitude == 1 ? "" : "s") ago"
         default: fatalError("unknown unit \(unit)")
         }
     }
 }
 
-private func loadAgeFormatCases() -> [AgeFormatCase] {
-    let fixtureURL = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent() // FooterFormattingTests.swift
-        .deletingLastPathComponent() // NetCheckAppTests
-        .deletingLastPathComponent() // Tests
-        .deletingLastPathComponent() // NetCheck
-        .deletingLastPathComponent() // apps
-        .appendingPathComponent("testdata/age-format-cases.json")
-    let data = try! Data(contentsOf: fixtureURL)
-    return try! JSONDecoder().decode([AgeFormatCase].self, from: data)
+private enum FixtureError: Error { case notFound(String) }
+
+/// Walks up from this source file until it finds `relative`, rather than
+/// assuming a fixed directory depth — survives the source tree being moved
+/// or the test layout changing.
+private func repoFixture(_ relative: String) throws -> URL {
+    var dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    while dir.path != "/" {
+        let candidate = dir.appendingPathComponent(relative)
+        if FileManager.default.fileExists(atPath: candidate.path) {
+            return candidate
+        }
+        dir.deleteLastPathComponent()
+    }
+    throw FixtureError.notFound(relative)
+}
+
+private func loadAgeFormatCases() throws -> [AgeFormatCase] {
+    let data = try Data(contentsOf: repoFixture("testdata/age-format-cases.json"))
+    return try JSONDecoder().decode([AgeFormatCase].self, from: data)
 }
 
 struct FooterFormattingTests {
-    @Test func matchesSharedFixture() {
+    @Test func matchesSharedFixture() throws {
         let updated = Date(timeIntervalSince1970: 0)
-        for testCase in loadAgeFormatCases() {
+        for testCase in try loadAgeFormatCases() {
             let now = updated.addingTimeInterval(testCase.seconds)
             #expect(
                 updatedAgoText(now: now, updated: updated) == testCase.expectedText,

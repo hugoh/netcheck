@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-#MISE description="Build a release, --locked netcheck binary"
-#MISE depends=["build:tui --release --locked"]
-set -euo pipefail

@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-#MISE description="Run the netcheck dashboard"
-set -euo pipefail
-
-cargo run -p netcheck --bin netcheck --features tui

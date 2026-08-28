@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-#MISE description="Scan Cargo.lock against RustSec advisories"
-#MISE sources=["Cargo.lock"]
-#MISE outputs={auto=true}
-set -euo pipefail
-
-cargo audit

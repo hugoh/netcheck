@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
-#MISE description="Build a working NetCheck.app (dev) with the netcheck-core binary embedded"
-#MISE depends=["build:netcheck-core"]
+#MISE description="Build a working NetCheck.app (dev debug build)"
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SWIFT_DIR="$ROOT_DIR/apps/NetCheck"
 APP="$ROOT_DIR/target/dev-app/NetCheck.app"
 CONTENTS_DIR="$APP/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
-# Matches crates/netstatus/build.rs's dev-version scheme, so the .app's
-# displayed version lines up with the embedded netcheck binary's.
 VERSION="${NETCHECK_VERSION:-}"
 if [ "$VERSION" = "" ]; then
 	SHA="$(cd "$ROOT_DIR" && git rev-parse --short=8 HEAD 2>/dev/null || true)"
@@ -18,13 +16,11 @@ if [ "$VERSION" = "" ]; then
 	VERSION="${VERSION:-dev}"
 fi
 
-(cd "$ROOT_DIR/apps/NetCheck" && swift build)
+(cd "$SWIFT_DIR" && swift build --product NetCheckApp)
 
 rm -rf "$APP"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
-
-cp "$ROOT_DIR/apps/NetCheck/.build/debug/NetCheckApp" "$MACOS_DIR/NetCheckApp"
-cp "$ROOT_DIR/target/debug/netcheck-core" "$MACOS_DIR/netcheck"
+cp "$SWIFT_DIR/.build/debug/NetCheckApp" "$MACOS_DIR/NetCheckApp"
 cp "$ROOT_DIR/assets/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 
 cat >"$CONTENTS_DIR/Info.plist" <<INFOPLIST

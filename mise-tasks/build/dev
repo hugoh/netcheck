@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-#MISE description="Build dev versions of every binary: netcheck, netcheck-core, and the macOS app"
-#MISE depends=["build:tui", "build:netcheck-core", "build:app"]
-set -euo pipefail

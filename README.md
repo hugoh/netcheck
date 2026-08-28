@@ -18,16 +18,21 @@ netcheck reports:
   operators filter ICMP at the edge regardless of whether the service is up)
 - **DNS resolution** — resolves well-known domains and reports success,
   addresses, and lookup latency
+- **Path** — the OS's own `NWPath` verdict on the primary route: status
+  (satisfied / unsatisfied / requires-connection), primary interface type, and
+  whether the link is metered or in Low Data Mode
+
+netcheck is macOS, Apple Silicon (arm64) only. It ships as a native SwiftUI
+app plus a small `netcheck` CLI, both built on one Swift network-probing
+engine (`NetStatus`).
 
 ## Install
-
-Three ways to get netcheck, in order of ease:
 
 ### Homebrew (recommended)
 
 ```sh
 brew tap hugoh/tap
-brew install netcheck              # netcheck binary
+brew install netcheck              # netcheck CLI
 brew install --cask netcheck       # native SwiftUI app
 ```
 
@@ -43,36 +48,66 @@ Grab the latest release from the
 - `NetCheck-<version>.zip` — the native app. Unzip and drag
   `NetCheck.app` to `/Applications`.
 
-Both are Apple Silicon (arm64) only.
-
 > [!NOTE]
-> `NetCheck.app` is ad-hoc signed, not notarized with a Developer ID.
-> The Homebrew cask strips the quarantine attribute on install, so it opens
-> normally. With a direct download, macOS will flag it as from an
+> Both artifacts are ad-hoc signed, not notarized with a Developer ID.
+> Homebrew strips the quarantine attribute on install, so they run
+> normally. With a direct download, macOS flags the app as from an
 > unidentified developer on first launch — right-click (or Control-click)
-> the app and choose **Open**, or clear it manually:
-> `xattr -cr /Applications/NetCheck.app`.
+> and choose **Open**, or clear it: `xattr -cr /Applications/NetCheck.app`
+> (for the CLI: `xattr -d com.apple.quarantine ./netcheck`).
 
 ### From source
 
+Requires the Swift toolchain (Xcode or the Command Line Tools).
+
 ```sh
-mise run build:tui       # netcheck
-mise run build:app       # dev build of the native NetCheck.app
-mise run bundle:swiftui  # signed release .app bundle of NetCheck
+mise run build:cli        # release netcheck CLI
+mise run build:app        # dev build of NetCheck.app
+mise run bundle:swiftui   # ad-hoc-signed release NetCheck.app bundle
 ```
 
-## The two flavors
+or plain SwiftPM:
 
-netcheck ships as two front ends, both built on the same diagnostics core:
+```sh
+swift build --package-path apps/NetCheck
+swift test  --package-path apps/NetCheck
+```
 
-| | What it is | Run it |
-|---|---|---|
-| **`netcheck`** | Interactive dashboard by default, JSON with a subcommand | `netcheck` / `netcheck status` |
-| **NetCheck.app** | Native macOS app | open from Applications, or `open /Applications/NetCheck.app` |
+`swift test` runs the deterministic suite (no network). Add the live network
+and system probes with:
 
-## Screenshots
+```sh
+mise run test-live   # or: NETCHECK_LIVE_TESTS=1 swift test --package-path apps/NetCheck
+```
 
-**JSON** — `netcheck vpn`
+Lint, format, and dead-code checks run together with:
+
+```sh
+mise run check   # swiftlint + swiftformat + periphery + icon
+mise run fix     # apply swiftformat
+```
+
+## Usage
+
+The CLI prints JSON to stdout — one snapshot per subcommand, meant for
+scripting and piping into `jq`:
+
+```sh
+netcheck                     # full snapshot as JSON (same as `netcheck status`)
+netcheck interfaces
+netcheck dns
+netcheck vpn
+netcheck proxy
+netcheck wifi
+netcheck path                # primary network path (NWPath)
+netcheck captive             # captive-portal status
+netcheck connection          # connectivity tier ("online" / "limited" / "offline")
+netcheck ping 1.1.1.1 8.8.8.8
+netcheck resolve google.com github.com
+netcheck connect amazon.com microsoft.com --port 443
+```
+
+Example — `netcheck vpn`:
 
 ```json
 {
@@ -84,57 +119,26 @@ netcheck ships as two front ends, both built on the same diagnostics core:
 }
 ```
 
-**Dashboard** — `netcheck`
+Output is JSON; there is no stability guarantee beyond that. `null`-valued
+fields are omitted.
 
-```text
- Overview   DNS   Reachability   Wi-Fi
-┌Interfaces────────────────────────────┐┌VPN / Tunnel────────────────┐┌Wi-Fi───────────────────────┐
-│en0      UP, ROUTABLE    192.168.68.18││Primary: en0                ││SSID: -                     │
-│awdl0    UP, LINK-LOCAL  fe80::xxxx:xx││VPN connected: false        ││Channel: 40 (5GHz, 160MHz)  │
-│llw0     UP, LINK-LOCAL  fe80::xxxx:xx││Split tunnel: false         ││Signal: -44 dBm             │
-│utun0    UP, LINK-LOCAL  fe80::8318:87││Split DNS: false            ││Noise: -92 dBm              │
-│utun1    UP, LINK-LOCAL  fe80::1ab6:1a││                            ││Security: WPA3 Personal     │
-│utun2    UP, LINK-LOCAL  fe80::822d:1f││                            ││PHY mode: 802.11ax          │
-└──────────────────────────────────────┘│                            ││                            │
-┌Interface detail──────────────────────┐└────────────────────────────┘│                            │
-│en0                                   │┌Proxy───────────────────────┐│                            │
-│  192.168.68.186/24           routable││HTTP: off                   ││                            │
-│  fe80::42f:a459:cbee:c64e/64 link-loc││HTTPS: off                  │└────────────────────────────┘
-└──────────────────────────────────────┘└────────────────────────────┘└────────────────────────────┘
-Online   q: quit   r: refresh now   a: auto-refresh (off)   1-4: tabs   updated 0s ago   netcheck dev-396365d
-```
-
-**NetCheck.app**:
+## NetCheck.app
 
 ![NetCheck.app screenshot](assets/screenshots/netcheck-app.png)
 
-## Usage
+The app shows the same data across four tabs (Overview, DNS, Reachability,
+Wi-Fi) and auto-refreshes: a re-check fires immediately on any OS
+network-path change (interface up/down, IP/DNS reconfig, a VPN connecting
+or dropping), backed by an adaptive-interval poll (60s while healthy, 10s
+once a check comes back degraded, a full re-check every fifth tick) as a
+safety net for failures that produce no path event — a blackholed route, a
+captive-portal sign-in on an unchanged Wi-Fi association.
 
-```sh
-netcheck                                     # interactive dashboard
-netcheck status                              # full snapshot as JSON
-netcheck interfaces
-netcheck dns
-netcheck vpn
-netcheck captive                             # captive-portal status as JSON
-netcheck connection                          # connection confidence as JSON
-netcheck ping 1.1.1.1 8.8.8.8
-netcheck resolve google.com github.com
-netcheck connect amazon.com microsoft.com --port 443
+Fields fill in progressively as each probe finishes, so a slow probe (the
+captive-portal check has a 10s timeout) never blocks the rest of the
+panel. Shortcuts: `⌘R` refresh, `⌘A` toggle auto-refresh, `⌘1`–`⌘4` switch
+tabs, `⌘Q` quit.
 
-# dashboard keys: q quit, r refresh, a toggle auto-refresh, 1-4 switch tabs
-```
-
-The native app and the dashboard both auto-refresh every 5 seconds (off by
-default — toggle with `a` in the dashboard); subcommands run on demand and
-are meant for scripting/piping into `jq`.
-
-Each status collection — every CLI `status`/`stream` call, and every
-dashboard auto-refresh — includes a plain HTTP (not HTTPS) request to
-`captive.apple.com`, the same captive-portal-check endpoint macOS itself
-uses, to determine whether the network is behind a captive portal.
-
-NetCheck.app uses Cmd-modified shortcuts instead — `q` to quit, `⌘R` to
-refresh, `⌘A` to toggle auto-refresh, `⌘1`-`⌘4` to switch tabs — shown in
-its toolbar and footer, so typing in a field can't accidentally trigger
-them.
+Each status collection includes a plain-HTTP (not HTTPS) request to
+`captive.apple.com` — the same captive-portal-check endpoint macOS itself
+uses — to determine whether the network is behind a captive portal.
