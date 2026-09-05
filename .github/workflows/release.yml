@@ -22,7 +22,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: hugoh/gh-workflows/setup@e3deb909891d6fc8089311f2e91e85796eb6c725 # v1.9.2
+      - uses: hugoh/gh-workflows/setup@bb265ccce6562fcb1ad4ae85a4aacc72de332652 # v1.20.0
         with:
           fetch-depth: "0"
 
