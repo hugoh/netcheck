@@ -25,10 +25,10 @@ jobs:
       # a synthetic merge commit, and with a shallow/grafted fetch its true
       # parent count isn't visible to libgit2, so cog can't recognize it as
       # a merge commit and cog.toml's ignore_merge_commits doesn't apply.
-      - uses: hugoh/gh-workflows/setup@e3deb909891d6fc8089311f2e91e85796eb6c725 # v1.9.2
+      - uses: hugoh/gh-workflows/setup@bb265ccce6562fcb1ad4ae85a4aacc72de332652 # v1.20.0
         with:
           fetch-depth: "0"
-      - uses: hugoh/gh-workflows/hk-check@e3deb909891d6fc8089311f2e91e85796eb6c725 # v1.9.2
+      - uses: hugoh/gh-workflows/hk-check@bb265ccce6562fcb1ad4ae85a4aacc72de332652 # v1.20.0
 
   # SwiftLint + build (warnings-as-errors) + test + periphery, on macOS —
   # netcheck's whole reason to exist is macOS-specific behavior
@@ -42,7 +42,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: hugoh/gh-workflows/setup@e3deb909891d6fc8089311f2e91e85796eb6c725 # v1.9.2
+      - uses: hugoh/gh-workflows/setup@bb265ccce6562fcb1ad4ae85a4aacc72de332652 # v1.20.0
       - name: Cache Swift build
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
@@ -74,7 +74,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: hugoh/gh-workflows/setup@e3deb909891d6fc8089311f2e91e85796eb6c725 # v1.9.2
+      - uses: hugoh/gh-workflows/setup@bb265ccce6562fcb1ad4ae85a4aacc72de332652 # v1.20.0
       - name: Cache Swift build
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
@@ -97,12 +97,15 @@ jobs:
   # main — PRs just get the check/build jobs above.
   pages-build:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
     steps:
-      - uses: hugoh/gh-workflows/setup@e3deb909891d6fc8089311f2e91e85796eb6c725 # v1.9.2
+      - uses: hugoh/gh-workflows/setup@bb265ccce6562fcb1ad4ae85a4aacc72de332652 # v1.20.0
       - name: Assemble site
         run: mise run build:pages
       - name: Upload Pages artifact
@@ -112,6 +115,9 @@ jobs:
 
   pages-deploy:
     needs: pages-build
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
