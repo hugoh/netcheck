@@ -65,7 +65,7 @@ cask "netcheck" do
 
   app "NetCheck.app"
 
-  postflight do
+  postflight_steps do
     # Ad-hoc signed (no Developer ID / notarization), so strip the
     # quarantine attribute Homebrew sets on the downloaded artifact —
     # otherwise Gatekeeper refuses to launch it as "from an unidentified
