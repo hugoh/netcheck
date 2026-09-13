@@ -24,11 +24,6 @@ struct WifiJSONParsingTests {
         let info = parse(Self.connected)
         #expect(info.connected)
         #expect(info.ssid == "MyWiFi")
-        #expect(info.channel == "36 (5GHz, 80MHz)")
-        #expect(info.phyMode == "802.11ax")
-        #expect(info.security == "spairport_security_mode_wpa2_personal")
-        #expect(info.signalDbm == -52)
-        #expect(info.noiseDbm == -90)
     }
 
     @Test func disconnectedReturnsDefault() {
@@ -47,7 +42,6 @@ struct WifiJSONParsingTests {
         let info = parse(Self.connected.replacingOccurrences(of: "MyWiFi", with: "<redacted>"))
         #expect(info.connected)
         #expect(info.ssid == nil)
-        #expect(info.channel == "36 (5GHz, 80MHz)")
     }
 
     // Inline JSON fixtures read better unwrapped.

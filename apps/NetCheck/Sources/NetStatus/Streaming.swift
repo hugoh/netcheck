@@ -125,40 +125,34 @@ extension NetStatus {
 }
 
 extension Probe {
-    static func pingEach(_ targets: [String], _ emit: @Sendable @escaping (PingResult) -> Void) async {
-        await withTaskGroup(of: PingResult.self) { group in
-            for target in targets {
-                group.addTask { await ping(target) }
+    static func each<Result: Sendable>(
+        _ items: [String],
+        probe: @Sendable @escaping (String) async -> Result,
+        emit: @Sendable @escaping (Result) -> Void
+    ) async {
+        await withTaskGroup(of: Result.self) { group in
+            for item in items {
+                group.addTask { await probe(item) }
             }
             for await result in group {
                 emit(result)
             }
         }
+    }
+
+    static func pingEach(_ targets: [String], _ emit: @Sendable @escaping (PingResult) -> Void) async {
+        await each(targets, probe: ping, emit: emit)
     }
 
     static func connectEach(
         _ targets: [String], port: UInt16, _ emit: @Sendable @escaping (ConnectResult) -> Void
     ) async {
-        await withTaskGroup(of: ConnectResult.self) { group in
-            for target in targets {
-                group.addTask { await connect(target, port: port) }
-            }
-            for await result in group {
-                emit(result)
-            }
-        }
+        await each(targets, probe: { await connect($0, port: port) }, emit: emit)
     }
 
     static func resolveEach(
         _ domains: [String], _ emit: @Sendable @escaping (ResolutionResult) -> Void
     ) async {
-        await withTaskGroup(of: ResolutionResult.self) { group in
-            for domain in domains {
-                group.addTask { await resolve(domain) }
-            }
-            for await result in group {
-                emit(result)
-            }
-        }
+        await each(domains, probe: resolve, emit: emit)
     }
 }

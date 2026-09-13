@@ -23,8 +23,11 @@ extension ContentView {
     private func interfacesPanel(_ status: PartialNetworkStatus) -> some View {
         PanelBox(title: "Interfaces") {
             if let interfaces = status.interfaces {
-                List(interfaces.filter { !$0.loopback }.sorted { classify($0) < classify($1) }) { iface in
-                    let cls = classify(iface)
+                List(
+                    interfaces.filter { !$0.loopback }
+                        .sorted { $0.classification < $1.classification }
+                ) { iface in
+                    let cls = iface.classification
                     HStack {
                         Text(iface.name).font(.system(.body, design: .monospaced))
                         Text(cls.label)
@@ -62,7 +65,7 @@ extension ContentView {
                         Text("Routed subnets: \(vpn.routedSubnets.joined(separator: ", "))")
                     }
                     if let resolvers = status.resolvers {
-                        let domains = vpnScopedDomains(resolvers)
+                        let domains = Probe.vpnScopedDomains(resolvers)
                         if !domains.isEmpty {
                             Text("VPN domains: \(domains.joined(separator: ", "))")
                         }

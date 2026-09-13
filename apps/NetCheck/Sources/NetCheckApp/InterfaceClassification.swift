@@ -22,7 +22,3 @@ extension InterfaceClass {
         }
     }
 }
-
-func classify(_ interface: NetInterface) -> InterfaceClass {
-    interface.classification
-}
