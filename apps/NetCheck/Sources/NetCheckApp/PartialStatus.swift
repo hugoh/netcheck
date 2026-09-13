@@ -1,11 +1,6 @@
 import NetStatus
 import SwiftUI
 
-/// Domains only resolvable via a VPN tunnel's own resolver.
-func vpnScopedDomains(_ resolvers: [Resolver]) -> [String] {
-    Probe.vpnScopedDomains(resolvers)
-}
-
 /// Progressively-filled network status. Single-value fields start `nil` and
 /// are merged in as each `StatusField` arrives from
 /// `NetStatus.collectStreaming`; a refresh never blanks a field back to

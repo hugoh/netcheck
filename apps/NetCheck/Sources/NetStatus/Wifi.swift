@@ -76,11 +76,6 @@ public extension Probe {
 struct AirportInfo {
     var connected = false
     var ssid: String?
-    var channel: String?
-    var signalDbm: Int?
-    var noiseDbm: Int?
-    var security: String?
-    var phyMode: String?
 }
 
 /// Parses `system_profiler SPAirPortDataType -json` output — finds the
@@ -94,17 +89,7 @@ func parseAirportJSON(_ data: Data) -> AirportInfo {
           let current = interfaces.lazy.compactMap(connectedNetworkInformation).first
     else { return AirportInfo() }
 
-    let (signal, noise) = parseSignalNoise(current["spairport_signal_noise"] as? String)
-
-    return AirportInfo(
-        connected: true,
-        ssid: ssidField(current),
-        channel: current["spairport_network_channel"] as? String,
-        signalDbm: signal,
-        noiseDbm: noise,
-        security: current["spairport_security_mode"] as? String,
-        phyMode: current["spairport_network_phymode"] as? String
-    )
+    return AirportInfo(connected: true, ssid: ssidField(current))
 }
 
 /// macOS 26 reports `_name` as the literal `"<redacted>"` (or omits it) for
@@ -125,14 +110,6 @@ private func connectedNetworkInformation(_ interface: [String: Any]) -> [String:
         (interface["spairport_status_information"] as? String) == "spairport_status_connected"
     let hasSSID = !((current["_name"] as? String) ?? "").isEmpty
     return statusConnected || hasSSID ? current : nil
-}
-
-private func parseSignalNoise(_ text: String?) -> (Int?, Int?) {
-    guard let text, let slash = text.firstIndex(of: "/") else { return (nil, nil) }
-    func dbm(_ substring: Substring) -> Int? {
-        substring.split(separator: " ").first.flatMap { Int($0) }
-    }
-    return (dbm(text[..<slash]), dbm(text[text.index(after: slash)...]))
 }
 
 func formatChannel(_ number: Int, band: CWChannelBand, width: CWChannelWidth) -> String {
