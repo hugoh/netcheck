@@ -1,3 +1,7 @@
+[default.extend-words]
+# macOS release codename, used as a Homebrew Cask `depends_on macos:` symbol.
+sur = "sur"
+
 [default.extend-identifiers]
 # Pico CSS's SRI hash for the CDN <link> in site/index.html — typos
 # "corrects" a substring of the base64 and would corrupt the hash.
