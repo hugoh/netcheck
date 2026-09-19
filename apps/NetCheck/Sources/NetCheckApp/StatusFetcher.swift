@@ -14,6 +14,8 @@ final class StatusFetcher: ObservableObject {
     /// True for the duration of a manual (⌘R) refresh — visible proof the
     /// refresh actually ran.
     @Published var isRefreshing = false
+    /// True while any check (manual or background) is in flight.
+    @Published private(set) var isChecking = false
     /// The generation of the manual refresh in flight — drives which rows
     /// the UI marks pending (`PartialNetworkStatus.isPending`).
     @Published private(set) var pendingRefreshGeneration: Int?
@@ -95,6 +97,7 @@ final class StatusFetcher: ObservableObject {
         }
         generation += 1
         let generation = generation
+        isChecking = true
         if manual {
             pendingRefreshGeneration = generation
         }
@@ -111,7 +114,6 @@ final class StatusFetcher: ObservableObject {
     private func apply(_ field: StatusField, generation: Int, manual: Bool) {
         guard generation == self.generation else { return }
         status.merge(field, generation: generation)
-        lastUpdated = Date()
         errorMessage = nil
 
         if let confidence = status.confidence {
@@ -124,7 +126,10 @@ final class StatusFetcher: ObservableObject {
     }
 
     private func completeCheck(generation: Int, manual: Bool) {
-        guard generation == self.generation, manual else { return }
+        guard generation == self.generation else { return }
+        isChecking = false
+        lastUpdated = Date()
+        guard manual else { return }
         isRefreshing = false
         pendingRefreshGeneration = nil
     }
