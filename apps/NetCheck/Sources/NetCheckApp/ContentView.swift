@@ -153,11 +153,18 @@ struct ContentView: View {
             }
             .keyboardShortcut("a", modifiers: [.command])
 
+            if fetcher.isChecking, !fetcher.isRefreshing {
+                ProgressView().controlSize(.small)
+            }
+
             if let updated = fetcher.lastUpdated {
                 TimelineView(.periodic(from: updated, by: 1)) { context in
                     Text(updatedAgoText(now: context.date, updated: updated))
                         .foregroundStyle(.secondary)
                 }
+            } else {
+                Text("Updating…")
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(.horizontal, 12)
