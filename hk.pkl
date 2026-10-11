@@ -13,6 +13,11 @@ min_hk_version = Base.min_hk_version
 local linters = new Mapping<String, Step> {
     ...Base.base
     ...Base.shell
+    // The generated 1024px app icon is just over the 500 KB limit; hk 2.5
+    // started checking binary files, so exempt that one asset.
+    ["check_added_large_files"] = (Builtins.check_added_large_files) {
+        exclude = List("assets/icon-1024.png")
+    }
     // Hashes scripts/gen_icon.swift + mise-tasks/icon/gen and compares
     // against assets/.icon-source.sha256 — pure cat/shasum, no swift/sips/
     // iconutil, so it runs fine on ubuntu and doesn't need excluding from
