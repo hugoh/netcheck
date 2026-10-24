@@ -16,6 +16,6 @@ shfmt = "3.14.1"
 cocogitto = "7.0.0"
 uv = "0.13.1"
 swiftlint = "0.65.1"
-swiftformat = { version = "0.63.1", os = ["macos"] }
+swiftformat = { version = "0.64.0", os = ["macos"] }
 pandoc = "3.12.1"
 "aqua:peripheryapp/periphery" = { version = "3.8.0", os = ["macos"] }
