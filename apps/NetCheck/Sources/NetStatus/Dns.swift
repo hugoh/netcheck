@@ -73,8 +73,9 @@ public extension Probe {
     static func vpnScopedDomains(_ resolvers: [Resolver]) -> [String] {
         var domains: [String] = []
         for resolver in resolvers {
-            guard resolver.scoped, resolver.ifName.map(isTunnelInterface) ?? false else { continue }
-            guard let domain = resolver.domain ?? resolver.searchDomains.first,
+            guard resolver.scoped,
+                  resolver.ifName.map(isTunnelInterface) ?? false,
+                  let domain = resolver.domain ?? resolver.searchDomains.first,
                   !domains.contains(domain)
             else { continue }
             domains.append(domain)
