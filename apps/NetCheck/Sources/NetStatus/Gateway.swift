@@ -9,10 +9,11 @@ extension Probe {
     ///     `RTF_GATEWAY` default route, keyed by outgoing interface index,
     ///  3. return the gateways on the interface that owns the local address.
     public static func defaultGatewayIps() -> [String] {
-        guard let localAddress = localOutboundAddress() else { return [] }
-        guard let index = Self.interfaceIndex(owning: localAddress) else { return [] }
+        guard let localAddress = localOutboundAddress(),
+              let index = interfaceIndex(owning: localAddress)
+        else { return [] }
 
-        let gateways = Self.defaultRouteGateways()
+        let gateways = defaultRouteGateways()
         guard let device = gateways[index] else { return [] }
         return device.v4 + device.v6
     }
@@ -97,9 +98,10 @@ extension Probe {
                 guard messageLength >= headerSize, offset + messageLength <= raw.count else { break }
                 defer { offset += messageLength }
 
-                guard header.rtm_version == RTM_VERSION else { continue }
-                guard header.rtm_flags & RTF_WASCLONED == 0 else { continue }
-                guard header.rtm_flags & RTF_GATEWAY != 0 else { continue }
+                guard header.rtm_version == RTM_VERSION,
+                      header.rtm_flags & RTF_WASCLONED == 0,
+                      header.rtm_flags & RTF_GATEWAY != 0
+                else { continue }
 
                 let addressBlock = UnsafeRawBufferPointer(
                     rebasing: raw[(offset + headerSize) ..< (offset + messageLength)]
