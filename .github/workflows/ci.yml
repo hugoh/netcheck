@@ -25,10 +25,10 @@ jobs:
       # a synthetic merge commit, and with a shallow/grafted fetch its true
       # parent count isn't visible to libgit2, so cog can't recognize it as
       # a merge commit and cog.toml's ignore_merge_commits doesn't apply.
-      - uses: hugoh/gh-workflows/setup@5e3ffc337ef532df4ff618c5d2844a09b254eaee # v1.40.10
+      - uses: hugoh/gh-workflows/setup@1395fc42fd4ca42b131cc238cea3cc6ab42af4dd # v1.40.11
         with:
           fetch-depth: "0"
-      - uses: hugoh/gh-workflows/hk-check@5e3ffc337ef532df4ff618c5d2844a09b254eaee # v1.40.10
+      - uses: hugoh/gh-workflows/hk-check@1395fc42fd4ca42b131cc238cea3cc6ab42af4dd # v1.40.11
 
   # SwiftLint + build (warnings-as-errors) + test + periphery, on macOS —
   # netcheck's whole reason to exist is macOS-specific behavior
@@ -42,7 +42,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: hugoh/gh-workflows/setup@5e3ffc337ef532df4ff618c5d2844a09b254eaee # v1.40.10
+      - uses: hugoh/gh-workflows/setup@1395fc42fd4ca42b131cc238cea3cc6ab42af4dd # v1.40.11
       - name: Cache Swift build
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -74,7 +74,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: hugoh/gh-workflows/setup@5e3ffc337ef532df4ff618c5d2844a09b254eaee # v1.40.10
+      - uses: hugoh/gh-workflows/setup@1395fc42fd4ca42b131cc238cea3cc6ab42af4dd # v1.40.11
       - name: Cache Swift build
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -105,7 +105,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: hugoh/gh-workflows/setup@5e3ffc337ef532df4ff618c5d2844a09b254eaee # v1.40.10
+      - uses: hugoh/gh-workflows/setup@1395fc42fd4ca42b131cc238cea3cc6ab42af4dd # v1.40.11
       - name: Assemble site
         run: mise run build:pages
       - name: Upload Pages artifact
