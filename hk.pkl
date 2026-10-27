@@ -1,6 +1,6 @@
-amends "package://github.com/jdx/hk/releases/download/v2.5.0/hk@2.5.0#/Config.pkl"
-import "package://github.com/jdx/hk/releases/download/v2.5.0/hk@2.5.0#/Builtins.pkl"
-import "package://github.com/hugoh/hk-config/releases/download/v2.1.3/hk-config@2.1.3#/base.pkl" as Base
+amends "package://github.com/jdx/hk/releases/download/v2.9.0/hk@2.9.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v2.9.0/hk@2.9.0#/Builtins.pkl"
+import "package://github.com/hugoh/hk-config/releases/download/v3.0.1/hk-config@3.0.1#/base.pkl" as Base
 
 min_hk_version = Base.min_hk_version
 
@@ -22,7 +22,7 @@ local linters = new Mapping<String, Step> {
     // against assets/.icon-source.sha256 — pure cat/shasum, no swift/sips/
     // iconutil, so it runs fine on ubuntu and doesn't need excluding from
     // `ci`.
-    ["icon"] = {
+    ["icon"] {
         glob = List("scripts/gen_icon.swift", "mise-tasks/icon/gen", "assets/.icon-source.sha256")
         check = "mise run check:icon"
     }
@@ -31,7 +31,7 @@ local linters = new Mapping<String, Step> {
     // "unable to get any tag" until one exists. Cheap to check full history
     // at this size — worth switching to `--from-latest-tag` once v0.1.0 is
     // tagged, to match the pattern other repos use.
-    ["conventional_commit"] = {
+    ["conventional_commit"] {
         check = "cog check"
     }
 }
