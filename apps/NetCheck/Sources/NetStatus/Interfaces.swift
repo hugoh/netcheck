@@ -89,14 +89,10 @@ extension Probe {
             }
             let rendered = "\(ip)/\(prefix)"
 
-            if family == AF_INET {
-                if byName[name]?.v4.contains(rendered) == false {
-                    byName[name]?.v4.append(rendered)
-                }
-            } else {
-                if byName[name]?.v6.contains(rendered) == false {
-                    byName[name]?.v6.append(rendered)
-                }
+            if family == AF_INET, byName[name]?.v4.contains(rendered) == false {
+                byName[name]?.v4.append(rendered)
+            } else if family != AF_INET, byName[name]?.v6.contains(rendered) == false {
+                byName[name]?.v6.append(rendered)
             }
         }
 
