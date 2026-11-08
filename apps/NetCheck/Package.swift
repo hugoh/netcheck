@@ -8,7 +8,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
         // Explicit dependency (rather than the toolchain-bundled copy) so
         // `swift test` works with just the Command Line Tools, no full Xcode.
-        .package(url: "https://github.com/apple/swift-testing.git", from: "0.12.0"),
+        .package(url: "https://github.com/apple/swift-testing.git", from: "6.4.2"),
     ],
     targets: [
         // The native network-probing engine: interface/route/DNS/proxy/VPN/
