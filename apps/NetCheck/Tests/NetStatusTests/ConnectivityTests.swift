@@ -55,4 +55,73 @@ struct ConnectivityTests {
         )
         #expect(status.connectivity == .limited)
     }
+
+    // MARK: degraded tier
+
+    private static func pings(_ rtts: [Double?]) -> [PingResult] {
+        rtts.enumerated().map { PingResult(target: "p\($0.offset)", reachable: $0.element != nil, rttMs: $0.element) }
+    }
+
+    private static func connects(_ rtts: [Double?]) -> [ConnectResult] {
+        rtts.enumerated().map {
+            ConnectResult(target: "c\($0.offset)", port: 443, reachable: $0.element != nil, rttMs: $0.element)
+        }
+    }
+
+    private static func resolves(_ ms: [Double]) -> [ResolutionResult] {
+        ms.enumerated().map {
+            ResolutionResult(domain: "d\($0.offset)", resolved: true, addresses: ["x"], durationMs: $0.element)
+        }
+    }
+
+    private static func rollup(
+        dns: [Double] = [20, 20, 20], v4: [Double?] = [10, 10, 10], v6: [Double?] = [],
+        tcp: [Double?] = [30, 30, 30], portal: CaptivePortalStatus = .clear, ipStack: IpStack? = nil
+    ) -> Connectivity {
+        NetworkStatus.connectivity(
+            resolution: resolves(dns), reachability: pings(v4), reachabilityV6: pings(v6),
+            domainReachability: connects(tcp), captivePortal: portal, ipStack: ipStack
+        )
+    }
+
+    @Test func fastHealthyProbesAreOnline() {
+        #expect(Self.rollup() == .online)
+    }
+
+    @Test func slowTcpMedianIsDegraded() {
+        #expect(Self.rollup(tcp: [1000, 1500, 1800]) == .degraded)
+        #expect(Self.rollup(tcp: [100, 200, 1800]) == .online)
+    }
+
+    @Test func slowDnsMedianIsDegraded() {
+        #expect(Self.rollup(dns: [600, 700, 800]) == .degraded)
+    }
+
+    @Test func pingLossOverQuarterIsDegraded() {
+        #expect(Self.rollup(v4: [10, 10, 10, nil]) == .online) // 25% is allowed
+        #expect(Self.rollup(v4: [10, 10, 10, 10, 10, 10, nil, nil]) == .online) // 2/8
+        #expect(Self.rollup(v4: [10, 10, 10, 10, 10, nil, nil]) == .degraded) // 2/7
+        #expect(Self.rollup(v4: [10, 10, 10, 10, nil, nil, nil]) == .degraded) // 3/7
+    }
+
+    @Test func v6OnlyHealthyIsNotPenalisedForDeadV4() {
+        #expect(Self.rollup(v4: [nil, nil, nil], v6: [10, 10, 10]) == .online)
+    }
+
+    @Test func deadV6OnDualStackIsDegraded() {
+        #expect(Self.rollup(v6: [nil, nil, nil], ipStack: .dualStack) == .degraded)
+        #expect(Self.rollup(v6: [nil, nil, nil], ipStack: .ipv4Only) == .online)
+        #expect(Self.rollup(v6: [nil, nil, nil], ipStack: nil) == .online)
+    }
+
+    @Test func degradedNeverMasksWorseTiers() {
+        #expect(Self.rollup(v4: [nil, nil, nil], tcp: [nil, nil, nil]) == .limited)
+        #expect(Self.rollup(tcp: [2000, 2000, 2000], portal: .detected) == .limited)
+    }
+
+    @Test func slowSampleFromTheFieldIsDegraded() {
+        let v4: [Double?] = [1564.5, 664.9, nil, nil, 1564.5, 1766.6, nil]
+        let tcp: [Double?] = [1858.9, 1581.9, 1566.4, 1566.7, 1603.3, 1767.7, 1033.1]
+        #expect(Self.rollup(v4: v4, tcp: tcp) == .degraded)
+    }
 }

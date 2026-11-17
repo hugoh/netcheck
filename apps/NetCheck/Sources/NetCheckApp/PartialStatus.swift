@@ -113,12 +113,14 @@ struct PartialNetworkStatus {
 /// wrapper over `NetStatus.Connectivity`.
 enum ConnectionConfidence {
     case online
+    case degraded
     case limited
     case offline
 
     init(_ connectivity: Connectivity) {
         switch connectivity {
         case .online: self = .online
+        case .degraded: self = .degraded
         case .limited: self = .limited
         case .offline: self = .offline
         }
@@ -127,6 +129,7 @@ enum ConnectionConfidence {
     var label: String {
         switch self {
         case .online: "Online"
+        case .degraded: "Slow"
         case .limited: "Limited"
         case .offline: "Offline"
         }
@@ -135,6 +138,7 @@ enum ConnectionConfidence {
     var icon: String {
         switch self {
         case .online: "checkmark.circle.fill"
+        case .degraded: "tortoise.fill"
         case .limited: "exclamationmark.circle.fill"
         case .offline: "xmark.circle.fill"
         }
@@ -143,6 +147,7 @@ enum ConnectionConfidence {
     var color: Color {
         switch self {
         case .online: .green
+        case .degraded: .orange
         case .limited: .yellow
         case .offline: .red
         }
@@ -158,14 +163,9 @@ extension PartialNetworkStatus {
         guard Self.confidenceGroups.isSubset(of: completedGroups), let captivePortal else {
             return nil
         }
-        let dnsOk = NetworkStatus.majorityOk(resolution) { $0.resolved }
-        let pingOk = NetworkStatus.majorityOk(reachability) { $0.reachable }
-            || NetworkStatus.majorityOk(reachabilityV6) { $0.reachable }
-        let tcpOk = NetworkStatus.majorityOk(domainReachability) { $0.reachable }
-        let base = NetworkStatus.classify(dnsOk: dnsOk, pingOk: pingOk, tcpOk: tcpOk)
-        if captivePortal == .detected, base == .online {
-            return ConnectionConfidence(.limited)
-        }
-        return ConnectionConfidence(base)
+        return ConnectionConfidence(NetworkStatus.connectivity(
+            resolution: resolution, reachability: reachability, reachabilityV6: reachabilityV6,
+            domainReachability: domainReachability, captivePortal: captivePortal, ipStack: ipStack
+        ))
     }
 }
