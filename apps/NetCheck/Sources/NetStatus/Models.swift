@@ -263,9 +263,11 @@ public enum CaptivePortalStatus: String, Codable, Sendable {
 /// Whether the machine has working internet access, classified from
 /// independent probe signals rather than any single check. `.limited`
 /// covers "connected but not really online" — a captive portal, or only
-/// one of DNS/ICMP/TCP getting through.
+/// one of DNS/ICMP/TCP getting through. `.degraded` is working internet
+/// that is slow or lossy (see `Defaults.degraded*`).
 public enum Connectivity: String, Codable, Sendable {
     case online
+    case degraded
     case limited
     case offline
 }
@@ -315,19 +317,49 @@ public struct NetworkStatus: Codable, Sendable, Equatable {
         self.captivePortal = captivePortal
     }
 
+    public var connectivity: Connectivity {
+        Self.connectivity(
+            resolution: resolution, reachability: reachability, reachabilityV6: reachabilityV6,
+            domainReachability: domainReachability, captivePortal: captivePortal, ipStack: ipStack
+        )
+    }
+
     /// Rolls the three independent signal categories — DNS resolution,
     /// ICMP reachability (v4 or v6), TCP connect — into a connectivity
-    /// tier, then caps at `.limited` when a captive portal is confirmed.
-    public var connectivity: Connectivity {
-        let dnsOk = Self.majorityOk(resolution) { $0.resolved }
-        let pingOk = Self.majorityOk(reachability) { $0.reachable }
-            || Self.majorityOk(reachabilityV6) { $0.reachable }
-        let tcpOk = Self.majorityOk(domainReachability) { $0.reachable }
-        let base = Self.classify(dnsOk: dnsOk, pingOk: pingOk, tcpOk: tcpOk)
-        if captivePortal == .detected, base == .online {
+    /// tier. An `.online` result is demoted to `.degraded` when latency or
+    /// loss is poor, or to `.limited` when a captive portal is confirmed.
+    /// A nil `ipStack` skips the dead-IPv6 check.
+    public static func connectivity( // swiftlint:disable:this function_parameter_count
+        resolution: [ResolutionResult], reachability: [PingResult], reachabilityV6: [PingResult],
+        domainReachability: [ConnectResult], captivePortal: CaptivePortalStatus, ipStack: IpStack?
+    ) -> Connectivity {
+        let dnsOk = majorityOk(resolution) { $0.resolved }
+        let pingOk = majorityOk(reachability) { $0.reachable }
+            || majorityOk(reachabilityV6) { $0.reachable }
+        let tcpOk = majorityOk(domainReachability) { $0.reachable }
+        let base = classify(dnsOk: dnsOk, pingOk: pingOk, tcpOk: tcpOk)
+        guard base == .online else { return base }
+        if captivePortal == .detected {
             return .limited
         }
-        return base
+
+        let slowTcp = median(domainReachability.compactMap { $0.reachable ? $0.rttMs : nil })
+            .map { $0 >= Defaults.degradedTcpMedianMs } ?? false
+        let slowDns = median(resolution.compactMap { $0.resolved ? $0.durationMs : nil })
+            .map { $0 >= Defaults.degradedDnsMedianMs } ?? false
+        let lossy = [reachability, reachabilityV6].filter { !$0.isEmpty }
+            .map { Double($0.filter { !$0.reachable }.count) / Double($0.count) }
+            .min().map { $0 > Defaults.degradedPingLoss } ?? false
+        let hasV6 = ipStack == .dualStack || ipStack == .ipv6Only
+        let deadV6 = hasV6 && !reachabilityV6.isEmpty && !reachabilityV6.contains { $0.reachable }
+        return slowTcp || slowDns || lossy || deadV6 ? .degraded : .online
+    }
+
+    static func median(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }
+        let sorted = values.sorted()
+        let mid = sorted.count / 2
+        return sorted.count.isMultiple(of: 2) ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
     }
 
     /// True when more than half of `results` satisfy `isOk`. Empty is never ok.

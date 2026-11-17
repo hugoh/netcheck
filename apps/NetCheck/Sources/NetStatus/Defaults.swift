@@ -18,4 +18,9 @@ public enum Defaults {
         "amazon.com", "apple.com", "cloudflare.com", "github.com",
         "google.com", "microsoft.com", "wikipedia.org",
     ]
+
+    /// Thresholds that demote an otherwise-online connection to `.degraded`.
+    public static let degradedTcpMedianMs = 800.0
+    public static let degradedDnsMedianMs = 500.0
+    public static let degradedPingLoss = 0.25
 }

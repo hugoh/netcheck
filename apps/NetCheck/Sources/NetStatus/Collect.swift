@@ -54,10 +54,10 @@ public enum NetStatus {
         let reachabilityV6Results = await reachabilityV6
         let domainReachabilityResults = await domainReachability
 
-        let dnsOk = NetworkStatus.majorityOk(resolutionResults) { $0.resolved }
-        let pingOk = NetworkStatus.majorityOk(reachabilityResults) { $0.reachable }
-            || NetworkStatus.majorityOk(reachabilityV6Results) { $0.reachable }
-        let tcpOk = NetworkStatus.majorityOk(domainReachabilityResults) { $0.reachable }
-        return NetworkStatus.classify(dnsOk: dnsOk, pingOk: pingOk, tcpOk: tcpOk)
+        return NetworkStatus.connectivity(
+            resolution: resolutionResults, reachability: reachabilityResults,
+            reachabilityV6: reachabilityV6Results, domainReachability: domainReachabilityResults,
+            captivePortal: .unknown, ipStack: nil
+        )
     }
 }
